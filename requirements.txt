@@ -1,0 +1,5 @@
+tensorflow-gpu
+sklearn
+pandas
+numpy
+tables
