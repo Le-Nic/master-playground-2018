@@ -1,5 +1,3 @@
-from typing import List, Any
-
 from inputhandler.input_reader import InputReader
 from sklearn.preprocessing import OneHotEncoder
 import numpy as np
@@ -29,7 +27,7 @@ class PreProcessing:
             self.x_len = {}  # length for arrays init.
             self.val = {}  # values for normalization
 
-        # get data sets readers from specified directory
+        # get datasets readers from specified directory
         self.trainsets = self._get_files(self.io['train_dir'])
         self.testsets = self._get_files(self.io['test_dir'])
 
@@ -239,10 +237,10 @@ class PreProcessing:
                 if item is not None:
                     self.columns_map[i + col_num + 1] -= 1
 
-        print("[PreProcessing] [metadata] Saving meta info. >", self.io['output_folder'] + "/mappings.hd5")
+        print("[PreProcessing] [metadata] Saving meta info. >", self.io['output_dir'] + "/mappings.hd5")
 
-        pathlib.Path(self.io['output_folder']).mkdir(parents=True, exist_ok=True)
-        meta_fo = tb.open_file(self.io['output_folder'] + "/mappings.hd5", mode='w')
+        pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
+        meta_fo = tb.open_file(self.io['output_dir'] + "/mappings.hd5", mode='w')
 
         # features' header
         x_map = np.empty(self.features_n, dtype="S32")
@@ -325,20 +323,20 @@ class PreProcessing:
 
     def transform_trainset(self):
         """ starts preprocessing of training dataset(s) """
-        pathlib.Path(self.io['output_folder']).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
 
         for trainset in self.trainsets:
             print("[PreProcessing] [operation] Processing trainset >", trainset['name'])
-            train_fo = tb.open_file(self.io['output_folder'] + "/" + trainset['name'] + ".hd5", mode='w')
+            train_fo = tb.open_file(self.io['output_dir'] + "/" + trainset['name'] + ".hd5", mode='w')
 
-            array_x = train_fo.create_earray(train_fo.root, "x", tb.Float64Atom(),
+            array_x = train_fo.create_earray(train_fo.root, "x", tb.Float64Atom(shape=()),
                                              (0, self.features_n), "Feature Data")
 
             array_ys = []
             lbl_group = train_fo.create_group(train_fo.root, "y")
             for n in range(self.lbl_type_n):
-                array_ys.append(train_fo.create_earray(lbl_group, "y"+str(n), tb.Int32Atom(),
-                                                       (0,), "Label type "+str(n)))
+                array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
+                                                       (0,), "Label type " + str(n)))
 
             next_chunk = True
             while next_chunk:
@@ -347,7 +345,7 @@ class PreProcessing:
                 x_new = np.zeros((cur_shape, self.features_n))
                 y_new = np.zeros(cur_shape)
 
-                # t
+                # t (gmt)
                 for col_num in self.col['t']:
                     x_new[:, self.columns_map[col_num]] = x[:, col_num].astype('datetime64[ms]').astype('int64')  # ms
 
@@ -402,20 +400,16 @@ class PreProcessing:
 
         return True
 
-
-
-
-
     def transform_testset(self):
         """ starts preprocessing of training dataset(s) """
-        pathlib.Path(self.io['output_folder']).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
 
         for testset in self.testsets:
             print("[PreProcessing] [operation] Processing testset >", testset['name'])
-            test_fo = tb.open_file(self.io['output_folder'] + "/" + testset['name'] + ".hd5", mode='w')
+            test_fo = tb.open_file(self.io['output_dir'] + "/" + testset['name'] + ".hd5", mode='w')
 
             array_x = test_fo.create_earray(test_fo.root, "x", tb.Float64Atom(),
-                                             (0, self.features_n), "Feature Data")
+                                            (0, self.features_n), "Feature Data")
 
             array_ys = []
             lbl_group = test_fo.create_group(test_fo.root, "y")
@@ -470,15 +464,15 @@ class PreProcessing:
 
                 array_x.append(x_new)
 
-                for i, mapping in enumerate(self.y_map[:2]):  # class 2 & 3
+                for i, mapping in enumerate(self.y_map[:2]):  # 0: 2-class, 1: 3-class
                     y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 0])
                     array_ys[i].append(y_new)
 
-                for mapping in self.y_map[2:3]:  # class 5
+                for mapping in self.y_map[2:3]:  # 2: 5-class
                     y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 1])
                     array_ys[2].append(y_new)
 
-                for mapping in self.y_map[3:4]:  # class 9
+                for mapping in self.y_map[3:4]:  # 3: 9-class
                     y_new[:] = np.vectorize(mapping.__getitem__)(np.core.defchararray.add(
                         y[:, 0].astype(str), y[:, 1].astype(str)))
                     array_ys[3].append(y_new)
@@ -511,7 +505,7 @@ pp_config = {
             'labels': -4,
         },
         'test_sets': None,
-        'output_folder': 'processed'
+        'output_dir': 'processed'
     },
     'normalization': 'minmax2r',  # zscore, minmax1r
     'pp': {

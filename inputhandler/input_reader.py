@@ -9,6 +9,13 @@ class InputReader:
         label in last column: InputReader("E:/test.csv", label_loc=-1) # support multiple columns
         label in separate file: InputReader("E:/test_x.csv", labels_file="E:/test_y.csv")
         without label: InputReader("E:/test_x.csv")
+
+        # Example usage
+        z = True
+        while z:
+            x, y, z = testInput.next()
+            print("data:", x)
+            print("labels:", y)
         """
 
         self.data = None

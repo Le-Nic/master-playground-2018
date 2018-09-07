@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 
+# DEPRECIATED
 class ReadSequenceData(object):
     ''' obtain the TextFileReader object and list of information for sequence reading '''
 
