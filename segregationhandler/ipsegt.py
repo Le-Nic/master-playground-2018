@@ -180,6 +180,21 @@ class IpSegregation(object):
                     }
                     flows_buffer[ip_pair]['x'][0] = x
 
+            # export remaining flows
+            for k in flows_buffer:
+                dataset_n += 1
+
+                try:
+                    seqlen_count[flows_buffer[k]['n']] += 1
+                except KeyError:
+                    seqlen_count[flows_buffer[k]['n']] = 1
+
+                # insert ip segregated dataset
+                x_w.append([flows_buffer[k]['x']])
+                seq_w.append([flows_buffer[k]['n']])
+                for n, y_w in enumerate(ys_w):
+                    y_w.append([flows_buffer[k]['y'][n]])
+
             h5_r.close()
             h5_w.close()
 

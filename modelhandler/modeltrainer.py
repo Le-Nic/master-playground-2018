@@ -33,25 +33,15 @@ class ModelTrainer(object):
 
             print("[ModelTrainer] Features length:", self.features_len)
             print("[ModelTrainer] Labels:",  ', '.join(['{0} - {1}'.format(k, v.decode("utf-8"))
-                                                      for k, v in self.y_dict.items()]))
+                                                        for k, v in self.y_dict.items()]))
 
         else:
             self.y_dict = None  # TODO: unknown labels and features length (nid ways to input this)
             self.features_len = None
 
-        # placeholder init.
-        features_placeholder = tf.placeholder(tf.float32, shape=[self.hyperparams['batch_n'],
-                                                                 self.hyperparams['sequence_max_n'], self.features_len])
-        label_placeholder = tf.placeholder(tf.int32, self.hyperparams['batch_n'])
-        seq_placeholder = tf.placeholder(tf.int32, self.hyperparams['batch_n'])
-        state_placeholder = tf.placeholder(tf.float32, [self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'],
-                                                        self.hyperparams['units_n']])
-
-        self.model = LSTModel(
-            features_placeholder, label_placeholder, seq_placeholder, state_placeholder,
-            self.features_len, self.hyperparams['batch_n'], self.hyperparams['sequence_max_n'], len(self.y_dict),
-            self.hyperparams['units_n'], self.hyperparams['layers_n'],
-            self.hyperparams['learning_r'], self.hyperparams['decay_r'], self.seed_value)
+        self.model_train = None
+        self.model_dev = None
+        self.model_test = None
 
     def _get_files(self, data_dir):
         """ assign Reader for each dataset found """
@@ -84,23 +74,60 @@ class ModelTrainer(object):
         print("[ModelTrainer]", file_count, "dataset(s) found in >", data_dir)
         return datasets
 
-    def _dataset_prep(self):
-        """ assign Reader for each dataset found """
-        dataset = tf.data.Dataset.from_tensor_slices((self.model.features_placeholder, self.model.label_placeholder,
-                                                      self.model.seq_placeholder))
-        dataset = dataset.batch(self.hyperparams['batch_n'])
+    def _dataset_prep(self, generator, batch_size):
+
+        dataset = tf.data.Dataset.from_generator(
+            generator,
+            output_types=(tf.float32, tf.int32, tf.int32),
+            output_shapes=(tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]),
+                           tf.TensorShape([]), tf.TensorShape([]))
+        )
+        dataset = dataset.batch(batch_size, drop_remainder=True)
         # dataset = dataset.padded_batch(self.hyperparams['batch_n'], padded_shapes=[])
-        dataset = dataset.prefetch(buffer_size=self.hyperparams['batch_n'])
+        dataset = dataset.prefetch(buffer_size=batch_size)
 
-        return dataset
+        return dataset.make_one_shot_iterator().get_next()
 
-    def train(self, train_dir):
+    def train(self, train_dir, dev_dir):
+
+        self.model_train = LSTModel(
+            tf.placeholder(
+                tf.float32, name="features",
+                shape=[self.hyperparams['batch_n'], self.hyperparams['sequence_max_n'], self.features_len]
+            ),
+            tf.placeholder(tf.int32, name="labels", shape=self.hyperparams['batch_n']),
+            tf.placeholder(tf.int32, name="sequences", shape=self.hyperparams['batch_n']),
+            # tf.placeholder(
+            #     tf.float32,
+            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+            # ),  # passing state to next batch
+            self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True
+        )
         trainsets = self._get_files(train_dir)
 
         for trainset in trainsets:
             print("[ModelTrainer] Training Set instances:", trainset['gen'].get_instances())
 
+        self.model_dev = LSTModel(
+            tf.placeholder(
+                tf.float32, name="features",
+                shape=[1, self.hyperparams['sequence_max_n'], self.features_len]
+            ),
+            tf.placeholder(tf.int32, name="labels", shape=1),
+            tf.placeholder(tf.int32, name="sequences", shape=1),
+            # tf.placeholder(
+            #     tf.float32,
+            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+            # ),  # passing state to next batch
+            self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False
+        )
+        devsets = self._get_files(dev_dir)
+
+        for devset in devsets:
+            print("[ModelTrainer] Testing Set instances:", devset['gen'].get_instances())
+
         with tf.Session() as sess:
+            # summary_writer = tf.summary.FileWriter('./logs', graph_def=sess.graph_def)  # tensorboard
 
             # h5_r = tb.open_file(trainset['path'], mode='r')
             # features = h5_r.get_node("/x")
@@ -125,45 +152,95 @@ class ModelTrainer(object):
 
             for _ in range(self.hyperparams['epochs_n']):
                 t = time.time()
-                loss_total = 0
-                error_total = 0
-                step = 0
+                loss_train = 0
+                acc_train = 0
+                step_train = 0
+
+                # merged_summary = tf.summary.merge_all()  # tensorboard
 
                 for trainset in trainsets:
-
-                    dataset = tf.data.Dataset.from_generator(
-                        trainset['gen'],
-                        output_types=(tf.float32, tf.int32, tf.int32),
-                        output_shapes=(tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]),
-                                       tf.TensorShape([]), tf.TensorShape([]))
-                    )
-                    dataset = dataset.batch(self.hyperparams['batch_n'], drop_remainder=True)
-                    dataset = dataset.prefetch(buffer_size=self.hyperparams['batch_n'])
-                    next_element = dataset.make_one_shot_iterator().get_next()
-
-                    state_current = np.zeros((self.hyperparams['layers_n'], 2,
-                                              self.hyperparams['batch_n'], self.hyperparams['units_n']))
+                    # state_current = np.zeros((self.hyperparams['layers_n'], 2,
+                    #                           self.hyperparams['batch_n'], self.hyperparams['units_n']))
+                    next_element = self._dataset_prep(trainset['gen'], self.hyperparams['batch_n'])
 
                     try:
                         while True:
                             features_batched, label_batched, seq_batched = sess.run(next_element)
 
-                            (_, loss), error = sess.run([self.model.optimize, self.model.error], feed_dict={
-                                self.model.features_placeholder: features_batched,
-                                self.model.label_placeholder: label_batched,
-                                self.model.seq_placeholder: seq_batched,
-                                self.model.state_placeholder: state_current
-                            })
+                            (_, loss), (_, acc) = sess.run(  # error prior backpropagation
+                                [self.model_train.optimize, self.model_train.error],
+                                feed_dict={
+                                    self.model_train.features_placeholder: features_batched,
+                                    self.model_train.label_placeholder: label_batched,
+                                    self.model_train.seq_placeholder: seq_batched
+                                    # self.model.state_placeholder: state_current
+                                }
+                            )
 
-                            loss_total += loss
-                            error_total += error
-                            step += 1
+                            # summary_writer.add_summary(summary_str, step_train)  # tensorboard
+
+                            # # retrieve trainable variables
+                            # trainable_vars_dict = {}
+                            # for k in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
+                            #     trainable_vars_dict[k.name] = sess.run(k)
+                            # lstm_weight_vals = trainable_vars_dict[
+                            #     "prediction/rnn/multi_rnn_cell/cell_0/lstm_cell/kernel:0"]
+                            # w_i, w_C, w_f, w_o = np.split(lstm_weight_vals, 4, axis=1)
+
+                            loss_train += loss
+                            acc_train += acc
+                            step_train += 1
 
                     except tf.errors.OutOfRangeError:
-                        epoch_n = sess.run(self.model.add_global_step)
+                        pass
 
-                        print("[ModelTrainer] Epoch " + str(epoch_n) +
-                              ", loss: %.6f" % round(loss_total/step, 6) +
-                              ", error: %.6f" % round(error_total/step, 6) +
-                              ", time elapsed: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+                epoch_n = sess.run(self.model_train.add_global_step)
+
+                if not (epoch_n % 10):
+                    predictions = []
+                    ground_truth = []
+                    acc_dev = 0
+                    step_dev = 0
+
+                    for devset in devsets:
+                        next_element = self._dataset_prep(devset['gen'], 1)
+
+                        try:
+                            while True:
+                                features_batched, label_batched, seq_batched = sess.run(next_element)
+                                pred, acc = sess.run(
+                                    self.model_dev.error,
+                                    feed_dict={
+                                        self.model_dev.features_placeholder: features_batched,
+                                        self.model_dev.label_placeholder: label_batched,
+                                        self.model_dev.seq_placeholder: seq_batched
+                                    }
+                                )
+                                predictions.extend(pred)
+                                ground_truth.extend(label_batched)
+
+                                # if pred_positive[0]:
+                                #     try:
+                                #         class_postives[label_batched[0]] += 1
+                                #     except KeyError:
+                                #         class_postives[label_batched[0]] = 1
+                                # else:
+                                #     try:
+                                #         class_negatives[label_batched[0]] += 1
+                                #     except KeyError:
+                                #         class_negatives[label_batched[0]] = 1
+
+                                acc_dev += acc
+                                step_dev += 1
+
+                        except tf.errors.OutOfRangeError:
+                            pass
+
+                    print("[ModelTrainer] acc: %.6f, truth:" % round(acc_dev/step_dev, 6), ground_truth,
+                          "predictions:", predictions)
+
+                print("[ModelTrainer] Epoch " + str(epoch_n) +
+                      ", loss: %.6f" % round(loss_train/step_train, 6) +
+                      ", acc: %.6f" % round(acc_train/step_train, 6) +
+                      ", time elapsed: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 

@@ -1,5 +1,6 @@
 from inputhandler.input_reader import InputReader
 from sklearn.preprocessing import OneHotEncoder
+from datetime import datetime
 import numpy as np
 import tables as tb
 import math
@@ -69,7 +70,7 @@ class PreProcessing:
         for col_num in self.col['norm']:
             self.val[col_num] = {
                 'v1': 999999999.,  # Min / Mean
-                'v2': .0  # Max / Std Dev.
+                'v2': -999999999.  # Max / Std Dev.
             }
 
         # normalization function assignment
@@ -213,9 +214,15 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):  # make way for extra columns (1hot)
                 self.columns_map[i + col_num + 1] += cols_ex
 
+        for col_num in self.col['t']:  # epoch time, sin (day), cos (day), sin (week), sin (week)
+            self.features_n += 4
+
+            for i, item in enumerate(self.columns_map[col_num + 1:]):
+                self.columns_map[i + col_num + 1] += 4
+
         for col_num in (self.col['1hot'] + [self.col['ips'][0]]):
             self.x_map[col_num] = {v: k for k, v in enumerate(self.x_unq[col_num])}
-            self.x_len[col_num] = len(self.x_map[col_num])
+            self.x_len[col_num] = len(self.x_map[col_num])  # unused for IP field
 
         for col_num in self.col['flg']:  # length-6 binary (flg)
             self.features_n += 5
@@ -246,6 +253,14 @@ class PreProcessing:
         x_map = np.empty(self.features_n, dtype="S32")
         x_map[:] = ''
         for col, col_nums in self.col.items():
+            if col == 't':
+                cyclic_type = ["_sin", "_cos"]
+                date_type = [" (day)", " (day)", " (month)", " (month)"]
+                for i, col_num in enumerate(col_nums):
+                    x_map[self.columns_map[col_num]] = col + str(i + 1)
+                    for r in range(4):
+                        x_map[self.columns_map[col_num]+r+1] = col + str(i+1) + cyclic_type[r % 2] + date_type[r]
+
             if col == '1hot':
                 for i, col_num in enumerate(col_nums):
                     for j, unq in enumerate(self.x_unq[col_num]):
@@ -295,7 +310,7 @@ class PreProcessing:
             self.val[col_num]['v1'] = min_val
             print("[PreProcessing] [metadata] Attribute", col_num, "[new Min]", min_val)
 
-        elif max_val > self.val[col_num]['v2']:
+        if max_val > self.val[col_num]['v2']:
             self.val[col_num]['v2'] = max_val
             print("[PreProcessing] [metadata] Attribute", col_num, "[new Max]", max_val)
 
@@ -320,6 +335,13 @@ class PreProcessing:
             self.val[col_num]['v2'] = math.sqrt(self.val[col_num]['v2'] / (self.instances - 1))
             print("[PreProcessing] [metadata] Attribute", col_num, "[Mean]", self.val[col_num]['v1'],
                   "[Std Dev.]", self.val[col_num]['v2'])
+
+    @staticmethod
+    def _get_normalized_time(epoch):
+        datetime_utc = datetime.utcfromtimestamp(epoch)
+
+        return (datetime_utc.isoweekday() / 7), \
+            ((datetime_utc.hour * 3600) + (datetime_utc.minute * 60) + datetime_utc.second) / 86400  # 24*60*60
 
     def transform_trainset(self):
         """ starts preprocessing of training dataset(s) """
@@ -347,7 +369,23 @@ class PreProcessing:
 
                 # t (gmt)
                 for col_num in self.col['t']:
-                    x_new[:, self.columns_map[col_num]] = x[:, col_num].astype('datetime64[ms]').astype('int64')  # ms
+                    epochs = x[:, col_num].astype('datetime64[s]').astype('int64')  # s
+
+                    x_new[:, self.columns_map[col_num]] = epochs
+                    day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+
+                    if self.normalization == 'minmax1r':
+                        x_new[:, self.columns_map[col_num]+1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num]+2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                    else:
+                        x_new[:, self.columns_map[col_num]+1] = np.sin(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num]+2] = np.cos(2 * np.pi * sec_ofday)
+
+                    # df = pd.DataFrame()  # import pandas as pd
+                    # df['sine'] = np.sin(2 * np.pi * sec_ofday)
+                    # df['cosine'] = np.cos(2 * np.pi * sec_ofday)
+                    # df.plot.scatter('sine', 'cosine').set_aspect('equal')
+                    # plt.show()  # import matplotlib.pyplot as plt
 
                 # ips
                 for col_num in self.col['ips']:
@@ -426,7 +464,17 @@ class PreProcessing:
 
                 # t
                 for col_num in self.col['t']:
-                    x_new[:, self.columns_map[col_num]] = x[:, col_num].astype('datetime64[ms]').astype('int64')  # ms
+                    epochs = x[:, col_num].astype('datetime64[s]').astype('int64')  # s
+
+                    x_new[:, self.columns_map[col_num]] = epochs
+                    day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+
+                    if self.normalization == 'minmax1r':
+                        x_new[:, self.columns_map[col_num]+1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num]+2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                    else:
+                        x_new[:, self.columns_map[col_num]+1] = np.sin(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num]+2] = np.cos(2 * np.pi * sec_ofday)
 
                 # ips
                 for col_num in self.col['ips']:

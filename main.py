@@ -1,6 +1,7 @@
 from preprocesshandler.preprocess import PreProcessing
 from segregationhandler.ipsegt import IpSegregation
-from modelhandler.modeltrainer import ModelTrainer
+# from modelhandler.modeltrainer import ModelTrainer
+from modelhandler.modeltrainer_classic import ModelTrainer
 import numpy as np
 
 
@@ -26,9 +27,11 @@ if __name__ == '__main__':
     # EG: None vs 1
     pp_config = {
         'io': {
-            'train_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week1.csv',
-            'test_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week2.csv',
-            'output_dir': 'E:/data/CIDDS-001/OpenStack/processed',
+            # 'train_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week1.csv',
+            # 'test_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week2.csv',
+            'train_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-train_normaltrimmed.csv',
+            'test_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-test.csv',
+            'output_dir': 'E:/data/CIDDS-001/OpenStack/processed_test',
             'read_chunk_size': 2000000,
             # parsing ith column(s) as dates
             'dates': [0],
@@ -46,10 +49,10 @@ if __name__ == '__main__':
         'label': {
             'i': [12, 13],  # col to use (max len: 2), treating ith column(s) until as label(s)
             'lbl_normal': ['normal', '---']
-        # the value of label which is "benign/normal" (same alignment w/ index above)
+            # the value of label which is "benign/normal" (same alignment w/ index above)
         },
         'pp': {
-            't': [0],
+            't': [0],  # zscore does not work for this
             'ips': [3, 5],
             'pts': [],
             '1hot': [2],
@@ -60,24 +63,26 @@ if __name__ == '__main__':
         }
     }
 
-    # pp_ugr = PreProcessing(pp_config)
-    # pp_ugr.get_metadata()
-    # pp_ugr.transform_trainset()
+    pp_ugr = PreProcessing(pp_config)
+    pp_ugr.get_metadata()
+    pp_ugr.transform_trainset()
     # pp_ugr.transform_testset()
 
     ''' IP Segregation (step 2) '''
     ipsgt_config = {
-        'input_dir': 'E:/data/CIDDS-001/OpenStack/processed',
+        # 'input_dir': 'E:/data/CIDDS-001/OpenStack/processed',
+        'input_dir': 'E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-test_normaltrimmed.hd5',  # test
         # 'output_dir': 'E:/data/CIDDS-001/OpenStack/processed',
-        'output_dir': 'F:/CIDDS-001',
+        'output_dir': 'E:/data/CIDDS-001/OpenStack/processed_test',
         'ip_1': 5,
         'ip_2': 7
     }
 
     # meta_path = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings.hd5"
-    #
+    meta_path = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normaltrimmed.hd5"  # test
+
     # ipsgt = IpSegregation(ipsgt_config, features_len=meta_path,
-    #                       time_window=10000, time_out=60000, sequence_max=256,
+    #                       time_window=10, time_out=60, sequence_max=4,
     #                       bidirectional=True, flow_te=True)
     # ipsgt.ip_segregate()
 
@@ -85,29 +90,28 @@ if __name__ == '__main__':
 
     # meta_path = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings.hd5"
     # train_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week1_ipsgt32.hd5"
-    # test_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week2_ipsgt32.hd5"
+    # dev_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week2_ipsgt32.hd5"
 
-    meta_path = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_test.hd5"
-    train_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-train_ipsgt500.hd5"
-    test_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-test_ipsgt500.hd5"
+    meta_path = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normaltrimmed.hd5"
+    train_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-train_normaltrimmed_ipsgt4.hd5"
+    dev_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-test_normaltrimmed_ipsgt4.hd5"
     validation_dir = None
-
     resume_checkpoint = False  # test / continue training from last epoch
 
     model_config = {
         'class_type': 2,  # 0: 2-class, 1: 3-class, 2: 5-class, 3: 9-class
 
         'hyperparameters': {
-            'sequence_max_n': 500,  # 32
-            'batch_n': 4,  # 1 when performing tests
-            'epochs_n': 10,
-            'units_n': 64,
+            'sequence_max_n': 4,
+            'batch_n': 8,  # 1 when performing tests
+            'epochs_n': 100,
+            'units_n': 32,
             'layers_n': 1,
-            'dropout_r': 0.6,  # 0 when performing tests
+            'dropout_r': 0.5,  # 0 when performing tests
             'learning_r': 0.01,
             'decay_r': 0.96
         }
     }
 
-    myModel = ModelTrainer(model_config, resume_checkpoint, meta_path)
-    myModel.train(train_dir)
+    # myModel = ModelTrainer(model_config, resume_checkpoint, meta_path)
+    # myModel.train(train_dir, dev_dir)
