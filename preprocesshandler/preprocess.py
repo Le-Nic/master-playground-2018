@@ -230,11 +230,17 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 self.columns_map[i + col_num + 1] += 5
 
-        for col_num in self.col['fwd_tos']:  # length-8 binary (fwd and tos)
+        for col_num in self.col['8bit']:  # length-8 binary (fwd and tos)
             self.features_n += 7
 
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 self.columns_map[i + col_num + 1] += 7
+
+        for col_num in self.col['16bit']:  # length-16 binary (ports)
+            self.features_n += 15
+
+            for i, item in enumerate(self.columns_map[col_num + 1:]):
+                self.columns_map[i + col_num + 1] += 15
 
         for col_num in self.col['rm']:  # column(s) to remove
             self.features_n -= 1
@@ -377,7 +383,7 @@ class PreProcessing:
                     if self.normalization == 'minmax1r':
                         x_new[:, self.columns_map[col_num]+1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
                         x_new[:, self.columns_map[col_num]+2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
-                    else:
+                    else:  # zscore normalization is not taken care of
                         x_new[:, self.columns_map[col_num]+1] = np.sin(2 * np.pi * sec_ofday)
                         x_new[:, self.columns_map[col_num]+2] = np.cos(2 * np.pi * sec_ofday)
 
@@ -410,10 +416,21 @@ class PreProcessing:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 6] = np.bitwise_not(
                         x[:, col_num].astype('S6').view('S1').reshape((cur_shape, -1)) == b'.') * 1
 
-                    # fwd_tos
-                for col_num in self.col['fwd_tos']:
+                # 8 bit binary (fwd, tos)
+                for col_num in self.col['8bit']:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 8] = np.unpackbits(
                         x[:, col_num].astype('uint8')).reshape((cur_shape, -1))
+
+                # 16 bit binary (ports)
+                for col_num in self.col['16bit']:
+                    for i, ele in enumerate(x[:, col_num]):  # detect ICMP type & code in protocol field
+                        if not float(ele).is_integer():  # if ICMP code is 0, it will not be detected
+                            icmp_field = ele.split('.')  # type, code
+                            # order is reverse, ICMP code is shifted 8 bits to the left
+                            x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256  # 8-bit code, 8-bit type
+
+                    x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
+                        x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
 
                 # others
                 for i in self.unprocessed_i:
@@ -501,10 +518,20 @@ class PreProcessing:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 6] = np.bitwise_not(
                         x[:, col_num].astype('S6').view('S1').reshape((cur_shape, -1)) == b'.') * 1
 
-                # fwd_tos
-                for col_num in self.col['fwd_tos']:
+                # 8 bit binary (fwd, tos)
+                for col_num in self.col['8bit']:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 8] = np.unpackbits(
                         x[:, col_num].astype('uint8')).reshape((cur_shape, -1))
+
+                # 16 bit binary (ports)
+                for col_num in self.col['16bit']:
+                    for i, ele in enumerate(x[:, col_num]):
+                        if not float(ele).is_integer():
+                            icmp_field = ele.split('.')
+                            x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256
+
+                    x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
+                        x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
 
                 # others
                 for i in self.unprocessed_i:
@@ -562,7 +589,7 @@ pp_config = {
         'pts': [4, 6],
         '1hot': [2],
         'flg': 10,  # .A.... -> 010000 (6)
-        'fwd_tos': [11],  # 4 -> 00000100 (8)
+        '8bit': [11],  # 4 -> 00000100 (8)
         'norm': [1, 7, 8, 9]
     }
 }

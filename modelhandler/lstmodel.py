@@ -124,10 +124,10 @@ class LSTModel(object):
         loss = tf.reduce_mean(cross_entropy)  # shape: 1
 
         # Learning Rate decay
-        learning_rate = tf.train.exponential_decay(
-            self.learning_r, self.global_step, decay_steps=1,
-            decay_rate=self.decay_r, name="lr_decay"
-        )
+        # learning_rate = tf.train.exponential_decay(
+        #     self.learning_r, self.global_step, decay_steps=1,
+        #     decay_rate=self.decay_r, name="lr_decay"
+        # )
 
         # calculate & clip Gradients
         trainables = tf.trainable_variables()  # returns all variables with trainable=True
@@ -138,7 +138,8 @@ class LSTModel(object):
         )
 
         optimizer = tf.train.AdamOptimizer(
-            learning_rate=learning_rate, name="adam_optimizer"
+            # learning_rate=learning_rate,
+            name="adam_optimizer"
         )
 
         # Optimization (minimize)

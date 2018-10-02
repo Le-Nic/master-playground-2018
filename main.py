@@ -37,27 +37,28 @@ if __name__ == '__main__':
             'dates': [0],
             # input data types for each column (omit labels if it's in separate file)
             'dtypes_in': {
-                1: np.float32, 2: np.object, 3: np.object, 4: np.float32,  # td, pr, sa, sp
-                5: np.object, 6: np.float32, 7: np.int32, 8: np.float32,  # da, dp, pkt, byt
+                1: np.float32, 2: np.object, 3: np.object, 4: np.object,  # td, pr, sa, sp
+                5: np.object, 6: np.object, 7: np.int32, 8: np.float32,  # da, dp, pkt, byt
                 9: np.int32, 10: np.object, 11: np.int32, 12: np.object,  # fl, flg, stos, lbl
                 13: np.object, 14: np.object, 15: np.object  # a.type, a.id, a.desc
             },
             # output data types to be expected after preprocessing, current dtype: Float64Atom()
             'dtypes_out': {}
         },
-        'normalization': 'minmax1r',  # zscore, minmax1r, minmax2r
+        'normalization': 'minmax1r',  # zscore (does not work on time feature), minmax1r, minmax2r
         'label': {
             'i': [12, 13],  # col to use (max len: 2), treating ith column(s) until as label(s)
             'lbl_normal': ['normal', '---']
             # the value of label which is "benign/normal" (same alignment w/ index above)
         },
         'pp': {
-            't': [0],  # zscore does not work for this
+            't': [0],
             'ips': [3, 5],
             'pts': [],
             '1hot': [2],
             'flg': [10],  # .A.... -> 010000 (6)
-            'fwd_tos': [11],  # 4 -> 00000100 (8)
+            '8bit': [11],  # 4 -> 00000100 (8)
+            '16bit': [4, 6],  # 4 -> 00000100 (8)
             'norm': [1, 7, 8],
             'rm': [9]  # col(s) to remove
         }
