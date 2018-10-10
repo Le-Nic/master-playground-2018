@@ -18,6 +18,8 @@ class PreProcessing:
         self.normalization = configs['normalization']
         self.lbl = configs['label']
 
+        self.ts = configs['ts']
+
         if mappings:
             None  # TODO: check and get dictionaries mapping for 1-hot, able to continue where it left off
         else:
@@ -73,7 +75,7 @@ class PreProcessing:
                 'v2': -999999999.  # Max / Std Dev.
             }
 
-        # normalization function assignment
+        # function assignment
         if self.normalization == 'minmax1r':
             self.normalize = self._minmax1r_norm
             self.get_norm_val = self._get_minmax
@@ -96,10 +98,22 @@ class PreProcessing:
             self.get_norm_val = self._none
             print("[PreProcessing] Normalization omitted")
 
+        if self.ts is not None:  # ms + duration
+            if self.io['is_epoch']:
+                self.get_epoch = lambda x, col_n: x[:, col_n] + x[:, self.ts]
+            else:
+                self.get_epoch = lambda x, col_n: x[:, col_n] \
+                                                      .astype('datetime64[ms]').astype('int64') / 1000 + x[:, self.ts]
+        else:  # ms
+            if self.io['is_epoch']:
+                self.get_epoch = lambda x, col_n: x[:, col_n]
+            else:
+                self.get_epoch = lambda x, col_n: x[:, col_n].astype('datetime64[ms]').astype('int64') / 1000
+
     def _get_files(self, data_dir):
         """ assign Reader for each dataset found """
         if data_dir is None:
-            return None
+            return []
 
         datasets = []
         file_count = 0
@@ -112,8 +126,9 @@ class PreProcessing:
 
                 datasets.append({
                     'name': child.stem,
-                    'reader': InputReader(str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
-                                          parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'])
+                    'reader': InputReader(str(child), label_loc=self.lbl['i'],
+                                          dtypes=self.io['dtypes_in'], parse_dates=self.io['dates'],
+                                          read_chunk_size=self.io['read_chunk_size'], delimiter=self.io['delimiter'])
                 }) if pathlib.Path(child).is_file() else None
 
         elif data_path.is_file():
@@ -121,8 +136,9 @@ class PreProcessing:
 
             datasets.append({
                 'name': data_path.stem,
-                'reader': InputReader(data_dir, label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
-                                      parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'])
+                'reader': InputReader(data_dir, label_loc=self.lbl['i'],
+                                      dtypes=self.io['dtypes_in'], parse_dates=self.io['dates'],
+                                      read_chunk_size=self.io['read_chunk_size'], delimiter=self.io['delimiter'])
             })
 
         print("[PreProcessing]", file_count, "file(s) found in >", data_dir)
@@ -160,6 +176,26 @@ class PreProcessing:
             self.instances += instance_num
             print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:", time.time() - t)
 
+        # second iteration (obtain IPs from testset, NOTE: depends on usage, this block should be removed)
+        for testset in self.testsets:
+            t = time.time()
+            print("[PreProcessing] [metadata] Processing >", testset['name'])
+
+            x, y = (None,) * 2
+            next_chunk = True
+            instance_num = 0
+
+            while next_chunk:
+                x, y, next_chunk = testset['reader'].next()
+                instance_num += self.io['read_chunk_size']
+
+                for col_num in self.col['ips']:  # IPs
+                    self.x_unq[self.col['ips'][0]] |= set(x[:, col_num])
+
+            instance_num -= (self.io['read_chunk_size'] - x.shape[0])
+            self.instances += instance_num
+            print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:", time.time() - t)
+
         # finishing calculation of mean / output info.
         for col_num in self.val:
             if self.normalization == 'zscore':
@@ -169,7 +205,7 @@ class PreProcessing:
                 print("[PreProcessing] [metadata] Attribute", col_num, "[Min]", self.val[col_num]['v1'],
                       "[Max]", self.val[col_num]['v2'])
 
-        # second iteration (calculation of Std Dev.)
+        # third iteration (calculation of Std Dev.)
         if self.normalization == 'zscore':
             self._calc_stddev()
 
@@ -179,6 +215,7 @@ class PreProcessing:
             # NOTE: prone to error if lbl_normal is not the same length with col['lbl']
             for i, col_num in enumerate(self.lbl['i']):
                 labels.append(list(self.y_unq[col_num]))
+                print(labels)
                 labels[i].insert(0, labels[i].pop(labels[i].index(self.lbl['lbl_normal'][i])))  # "normal" lbl to front
 
             # [0] -> 2 / others (binary)
@@ -214,11 +251,11 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):  # make way for extra columns (1hot)
                 self.columns_map[i + col_num + 1] += cols_ex
 
-        for col_num in self.col['t']:  # epoch time, sin (day), cos (day), sin (week), sin (week)
-            self.features_n += 4
+        for col_num in self.col['t']:  # sin (day), cos (day), sin (week), sin (week)
+            self.features_n += 3
 
             for i, item in enumerate(self.columns_map[col_num + 1:]):
-                self.columns_map[i + col_num + 1] += 4
+                self.columns_map[i + col_num + 1] += 3
 
         for col_num in (self.col['1hot'] + [self.col['ips'][0]]):
             self.x_map[col_num] = {v: k for k, v in enumerate(self.x_unq[col_num])}
@@ -242,13 +279,15 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 self.columns_map[i + col_num + 1] += 15
 
-        for col_num in self.col['rm']:  # column(s) to remove
+        for col_num in (self.col['rm'] + self.col['ips']):  # column(s) to remove
             self.features_n -= 1
             self.columns_map[col_num] = None
 
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 if item is not None:
                     self.columns_map[i + col_num + 1] -= 1
+
+    def save_metadata(self):
 
         print("[PreProcessing] [metadata] Saving meta info. >", self.io['output_dir'] + "/mappings.hd5")
 
@@ -263,15 +302,13 @@ class PreProcessing:
                 cyclic_type = ["_sin", "_cos"]
                 date_type = [" (day)", " (day)", " (month)", " (month)"]
                 for i, col_num in enumerate(col_nums):
-                    x_map[self.columns_map[col_num]] = col + str(i + 1)
                     for r in range(4):
-                        x_map[self.columns_map[col_num]+r+1] = col + str(i+1) + cyclic_type[r % 2] + date_type[r]
-
-            if col == '1hot':
+                        x_map[self.columns_map[col_num]+r] = col + str(i+1) + cyclic_type[r % 2] + date_type[r]
+            elif col == '1hot':
                 for i, col_num in enumerate(col_nums):
                     for j, unq in enumerate(self.x_unq[col_num]):
                         x_map[self.columns_map[col_num]+j] = col + str(i+1) + ": " + unq
-            elif col == 'rm':
+            elif col == 'rm' or col == 'ips':
                 pass
             else:
                 for i, col_num in enumerate(col_nums):
@@ -290,15 +327,14 @@ class PreProcessing:
             for lbl, k in mapping.items():
                 y_map[k] = lbl
 
-            if i == 2:
-                y_map[0] = self.lbl['lbl_normal'][0]
+            if i == 0:
+                y_map = ["normal", "anomaly"]
+            else:
+                y_map[0] = "normal"
+
             meta_fo.create_array(meta_fo.root, "y"+str(i), y_map, "Labels Mapping")
 
         meta_fo.close()
-
-        # lbl_extra = {labels[0][0]: 0}
-        # for k, v in enumerate(labels[1][1:]):
-        #     lbl_extra[v] = k + 1
 
     def _unq_lbl(self, y):
         for col_num in (self.lbl['i']):
@@ -343,11 +379,12 @@ class PreProcessing:
                   "[Std Dev.]", self.val[col_num]['v2'])
 
     @staticmethod
-    def _get_normalized_time(epoch):
+    def _get_normalized_time(epoch):  # ms
         datetime_utc = datetime.utcfromtimestamp(epoch)
 
         return (datetime_utc.isoweekday() / 7), \
-            ((datetime_utc.hour * 3600) + (datetime_utc.minute * 60) + datetime_utc.second) / 86400  # 24*60*60
+            ((datetime_utc.hour * 3600) + (datetime_utc.minute * 60) + (datetime_utc.second) +
+             (datetime_utc.microsecond/1000000)) / 86400  # 24*60*60
 
     def transform_trainset(self):
         """ starts preprocessing of training dataset(s) """
@@ -360,6 +397,12 @@ class PreProcessing:
             array_x = train_fo.create_earray(train_fo.root, "x", tb.Float64Atom(shape=()),
                                              (0, self.features_n), "Feature Data")
 
+            array_t = train_fo.create_earray(train_fo.root, "t", tb.Float64Atom(shape=()),
+                                             (0, len(self.col['t'])), "Time")
+
+            array_ip = train_fo.create_earray(train_fo.root, "ip", tb.Int64Atom(shape=()),
+                                              (0, len(self.col['ips'])), "IP Addresses")
+
             array_ys = []
             lbl_group = train_fo.create_group(train_fo.root, "y")
             for n in range(self.lbl_type_n):
@@ -371,21 +414,28 @@ class PreProcessing:
                 x, y, next_chunk = trainset['reader'].next()
                 cur_shape = self.io['read_chunk_size'] if next_chunk else x.shape[0]
                 x_new = np.zeros((cur_shape, self.features_n))
+                t_new = np.zeros((cur_shape, len(self.col['t'])))
+                ip_new = np.zeros((cur_shape, len(self.col['ips'])))
                 y_new = np.zeros(cur_shape)
 
                 # t (gmt)
-                for col_num in self.col['t']:
-                    epochs = x[:, col_num].astype('datetime64[s]').astype('int64')  # s
+                for i, col_num in enumerate(self.col['t']):
+                    epochs = self.get_epoch(x, col_num)
 
-                    x_new[:, self.columns_map[col_num]] = epochs
+                    t_new[:, i] = epochs
                     day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
 
                     if self.normalization == 'minmax1r':
-                        x_new[:, self.columns_map[col_num]+1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num]+2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num]] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num]+1] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num]+2] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
+                        x_new[:, self.columns_map[col_num]+3] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+
                     else:  # zscore normalization is not taken care of
-                        x_new[:, self.columns_map[col_num]+1] = np.sin(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num]+2] = np.cos(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num]] = np.sin(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num]+1] = np.cos(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num]+2] = np.sin(2 * np.pi * day_ofweek)
+                        x_new[:, self.columns_map[col_num]+3] = np.cos(2 * np.pi * day_ofweek)
 
                     # df = pd.DataFrame()  # import pandas as pd
                     # df['sine'] = np.sin(2 * np.pi * sec_ofday)
@@ -394,8 +444,8 @@ class PreProcessing:
                     # plt.show()  # import matplotlib.pyplot as plt
 
                 # ips
-                for col_num in self.col['ips']:
-                    x_new[:, self.columns_map[col_num]] = np.vectorize(
+                for i, col_num in enumerate(self.col['ips']):
+                    ip_new[:, i] = np.vectorize(
                         self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
 
                 # norm
@@ -437,6 +487,8 @@ class PreProcessing:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
                 array_x.append(x_new)
+                array_t.append(t_new)
+                array_ip.append(ip_new)
 
                 for i, mapping in enumerate(self.y_map[:2]):  # class 2 & 3
                     y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 0])
@@ -466,6 +518,12 @@ class PreProcessing:
             array_x = test_fo.create_earray(test_fo.root, "x", tb.Float64Atom(),
                                             (0, self.features_n), "Feature Data")
 
+            array_t = test_fo.create_earray(test_fo.root, "t", tb.Float64Atom(shape=()),
+                                            (0, len(self.col['t'])), "Time")
+
+            array_ip = test_fo.create_earray(test_fo.root, "ip", tb.Int64Atom(shape=()),
+                                             (0, len(self.col['ips'])), "IP Addresses")
+
             array_ys = []
             lbl_group = test_fo.create_group(test_fo.root, "y")
             for n in range(self.lbl_type_n):
@@ -477,27 +535,39 @@ class PreProcessing:
                 x, y, next_chunk = testset['reader'].next()
                 cur_shape = self.io['read_chunk_size'] if next_chunk else x.shape[0]
                 x_new = np.zeros((cur_shape, self.features_n))
+                t_new = np.zeros((cur_shape, len(self.col['t'])))
+                ip_new = np.zeros((cur_shape, len(self.col['ips'])))
                 y_new = np.zeros(cur_shape)
 
                 # t
-                for col_num in self.col['t']:
-                    epochs = x[:, col_num].astype('datetime64[s]').astype('int64')  # s
+                for i, col_num in enumerate(self.col['t']):
+                    epochs = self.get_epoch(x, col_num)
 
-                    x_new[:, self.columns_map[col_num]] = epochs
+                    t_new[:, i] = epochs
                     day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
 
                     if self.normalization == 'minmax1r':
-                        x_new[:, self.columns_map[col_num]+1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num]+2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
-                    else:
-                        x_new[:, self.columns_map[col_num]+1] = np.sin(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num]+2] = np.cos(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num] + 1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num] + 2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                        x_new[:, self.columns_map[col_num] + 3] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
+                        x_new[:, self.columns_map[col_num] + 4] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+
+                    else:  # zscore normalization is not taken care of
+                        x_new[:, self.columns_map[col_num] + 1] = np.sin(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num] + 2] = np.cos(2 * np.pi * sec_ofday)
+                        x_new[:, self.columns_map[col_num] + 3] = np.sin(2 * np.pi * day_ofweek)
+                        x_new[:, self.columns_map[col_num] + 4] = np.cos(2 * np.pi * day_ofweek)
 
                 # ips
-                for col_num in self.col['ips']:
-                    unq_i = np.vectorize(self.x_map[self.col['ips'][0]].get, otypes=[np.object])(x[:, col_num])
-                    unq_i[unq_i == None] = -1
-                    x_new[:, self.columns_map[col_num]] = unq_i.astype(np.int)
+                for i, col_num in enumerate(self.col['ips']):
+                    ip_new[:, i] = np.vectorize(
+                        self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+
+                # # ips (when unknown IPs present, convert to -1)
+                # for col_num in self.col['ips']:
+                #     unq_i = np.vectorize(self.x_map[self.col['ips'][0]].get, otypes=[np.object])(x[:, col_num])
+                #     unq_i[unq_i == None] = -1
+                #     x_new[:, self.columns_map[col_num]] = unq_i.astype(np.int)
 
                 # norm
                 for col_num in self.col['norm']:
@@ -538,6 +608,8 @@ class PreProcessing:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
                 array_x.append(x_new)
+                array_t.append(t_new)
+                array_ip.append(ip_new)
 
                 for i, mapping in enumerate(self.y_map[:2]):  # 0: 2-class, 1: 3-class
                     y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 0])

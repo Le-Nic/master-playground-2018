@@ -18,13 +18,16 @@ def define_scope(func):
 
 
 class LSTModel(object):
-    def __init__(self, features_placeholder, label_placeholder, seq_placeholder,  # state_placeholder,
+    def __init__(self, placeholders,
                  hyperparams, features_len, labels_len, seed_value, is_training):
 
         # placeholders
-        self.features_placeholder = features_placeholder
-        self.label_placeholder = label_placeholder
-        self.seq_placeholder = seq_placeholder
+        self.features_placeholder = placeholders['features']
+        self.label_placeholder = placeholders['labels']
+        try:
+            self.seq_placeholder = placeholders['sequences']
+        except KeyError:
+            self.seq_placeholder = None
         # self.state_placeholder = state_placeholder
 
         self.features_len = features_len
@@ -48,7 +51,7 @@ class LSTModel(object):
         self.prediction
         self.optimize
         self.error
-        self.add_global_step
+        # self.add_global_step
 
     @define_scope
     def prediction(self):
@@ -84,7 +87,7 @@ class LSTModel(object):
         _, states = tf.nn.dynamic_rnn(
             cells_stacked,
             self.features_placeholder,
-            sequence_length=self.seq_placeholder,
+            sequence_length=self.seq_placeholder if self.sequence_max_n else None,
             initial_state=None,  # zero state
             dtype=tf.float32,
             time_major=False
@@ -114,16 +117,31 @@ class LSTModel(object):
     @define_scope
     def optimize(self):
 
+        class_weights = tf.constant([[1.0, 2.0, 2.0, 2.0, 2.0]])
+        one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
+        # deduce weights for batch samples based on their true label
+        weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
+        # compute your (unweighted) softmax cross entropy loss
+        unweighted_losses = tf.nn.softmax_cross_entropy_with_logits(
+            labels=one_hot_labels,
+            logits=self.prediction
+        )
+        # apply the weights, relying on broadcasting of the multiplication
+        weighted_losses = unweighted_losses * weights
+        # reduce the result to get your final loss
+        loss = tf.reduce_mean(weighted_losses)
+
         # compute Loss,  shape: [batch_n]
         # m:n - seq2seq.sequence_loss, with sequence mask and averaging over batches
-        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=self.label_placeholder,
-            logits=self.prediction,
-            name="softmax_crossentropy"
-        )
-        loss = tf.reduce_mean(cross_entropy)  # shape: 1
+        # cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        #     labels=self.label_placeholder,
+        #     logits=self.prediction,
+        #     name="softmax_crossentropy"
+        # )
 
-        # Learning Rate decay
+        # loss = tf.reduce_mean(cross_entropy)  # shape: 1
+
+        # Learning Rate decay (uses Adam)
         # learning_rate = tf.train.exponential_decay(
         #     self.learning_r, self.global_step, decay_steps=1,
         #     decay_rate=self.decay_r, name="lr_decay"
@@ -137,13 +155,11 @@ class LSTModel(object):
             name="gradient_clipping"
         )
 
-        optimizer = tf.train.AdamOptimizer(
+        # Optimization (minimize)
+        update_step = tf.train.AdamOptimizer(
             # learning_rate=learning_rate,
             name="adam_optimizer"
-        )
-
-        # Optimization (minimize)
-        update_step = optimizer.apply_gradients(
+        ).apply_gradients(
             zip(clipped_gradients, trainables),
             name="apply_gradients", global_step=tf.train.get_or_create_global_step())
 
@@ -152,15 +168,13 @@ class LSTModel(object):
     @define_scope
     def error(self):
 
-        logits = self.prediction
-
-        pred = tf.argmax(tf.nn.softmax(logits), axis=1, output_type=tf.int32)  # shape: [batch_n]
+        pred = tf.argmax(tf.nn.softmax(self.prediction), axis=1, output_type=tf.int32)  # shape: [batch_n]
         pred_positive = tf.equal(pred, self.label_placeholder)
 
-        return logits, tf.reduce_mean(
+        return pred, tf.reduce_mean(
             tf.cast(pred_positive, tf.float32)  # shape: [batch_n]
         )  # shape: 1
-
-    @define_scope
-    def add_global_step(self):
-        return self.global_step.assign_add(1)
+    #
+    # @define_scope
+    # def add_global_step(self):
+    #     return self.global_step.assign_add(1)

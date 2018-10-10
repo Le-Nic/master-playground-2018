@@ -1,7 +1,8 @@
 from preprocesshandler.preprocess import PreProcessing
 from segregationhandler.ipsegt import IpSegregation
-# from modelhandler.modeltrainer import ModelTrainer
-from modelhandler.modeltrainer_classic import ModelTrainer
+from segregationhandler.winsegt import WindowSegregation
+from inputhandler.dataset_shuffler import DatasetShuffler
+from modelhandler.modeltrainer import ModelTrainer
 import numpy as np
 
 
@@ -22,97 +23,93 @@ import numpy as np
 if __name__ == '__main__':
 
     ''' Features Preprocessing (step 1) '''
-    # EG: [] vs [1,2,3]
-    # EG: None vs {0:0, 1:1, 3:3}
-    # EG: None vs 1
-    pp_config = {
-        'io': {
-            # 'train_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week1.csv',
-            # 'test_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-internal-week2.csv',
-            'train_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-train_normaltrimmed.csv',
-            'test_dir': 'E:/data/CIDDS-001/OpenStack/CIDDS-001-test.csv',
-            'output_dir': 'E:/data/CIDDS-001/OpenStack/processed_test',
-            'read_chunk_size': 2000000,
-            # parsing ith column(s) as dates
-            'dates': [0],
-            # input data types for each column (omit labels if it's in separate file)
-            'dtypes_in': {
-                1: np.float32, 2: np.object, 3: np.object, 4: np.object,  # td, pr, sa, sp
-                5: np.object, 6: np.object, 7: np.int32, 8: np.float32,  # da, dp, pkt, byt
-                9: np.int32, 10: np.object, 11: np.int32, 12: np.object,  # fl, flg, stos, lbl
-                13: np.object, 14: np.object, 15: np.object  # a.type, a.id, a.desc
-            },
-            # output data types to be expected after preprocessing, current dtype: Float64Atom()
-            'dtypes_out': {}
-        },
-        'normalization': 'minmax1r',  # zscore (does not work on time feature), minmax1r, minmax2r
-        'label': {
-            'i': [12, 13],  # col to use (max len: 2), treating ith column(s) until as label(s)
-            'lbl_normal': ['normal', '---']
-            # the value of label which is "benign/normal" (same alignment w/ index above)
-        },
-        'pp': {
-            't': [0],
-            'ips': [3, 5],
-            'pts': [],
-            '1hot': [2],
-            'flg': [10],  # .A.... -> 010000 (6)
-            '8bit': [11],  # 4 -> 00000100 (8)
-            '16bit': [4, 6],  # 4 -> 00000100 (8)
-            'norm': [1, 7, 8],
-            'rm': [9]  # col(s) to remove
-        }
+
+    with open("configs/gure", 'r') as config_file:
+        pp_config = eval(config_file.read())
+    print(pp_config['pp'])
+
+    # pp = PreProcessing(pp_config)
+    # pp.get_metadata()
+    # pp.save_metadata()
+    # pp.transform_trainset()
+    # pp.transform_testset()
+
+    ''' Win/IP Segregation (step 2) '''
+    '''
+    IPSgt: time should be 'te' instead of 'ts', use preprocess-handler to convert the 'ts' to 'te',
+    1st & 2nd column in /ip will be treated as source & destination address respectively. 
+    '''
+    # CIDDS
+    """
+    flowsgt_config = {
+        # 'input_dir': "E:/data/CIDDS-001/OpenStack/processed/minmax1r/data",
+        'input_dir': "E:/data/CIDDS-001/OpenStack/processed_test/normal/data",  # test
+        # 'output_dir': "E:/data/CIDDS-001/OpenStack/processed/minmax1r/data",
+        'output_dir': "E:/data/CIDDS-001/OpenStack/processed_test/normal",  # test
+        # 'features_len': "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings.hd5",
+        'features_len': "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normal.hd5",  # test
+    }
+    """
+
+    # GURE
+    flowsgt_config = {
+        'input_dir': "E:/data/gure/processed",
+        'output_dir': "F:/gure",
+        'features_len': "E:/data/gure/meta/mappings.hd5",
     }
 
-    pp_ugr = PreProcessing(pp_config)
-    pp_ugr.get_metadata()
-    pp_ugr.transform_trainset()
-    # pp_ugr.transform_testset()
+    # winsgt = WindowSegregation(flowsgt_config, sequence_max=16, ip_segt=True, single_output=True)
+    # winsgt.window_segregate()
 
-    ''' IP Segregation (step 2) '''
-    ipsgt_config = {
-        # 'input_dir': 'E:/data/CIDDS-001/OpenStack/processed',
-        'input_dir': 'E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-test_normaltrimmed.hd5',  # test
-        # 'output_dir': 'E:/data/CIDDS-001/OpenStack/processed',
-        'output_dir': 'E:/data/CIDDS-001/OpenStack/processed_test',
-        'ip_1': 5,
-        'ip_2': 7
-    }
-
-    # meta_path = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings.hd5"
-    meta_path = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normaltrimmed.hd5"  # test
-
-    # ipsgt = IpSegregation(ipsgt_config, features_len=meta_path,
-    #                       time_window=10, time_out=60, sequence_max=4,
-    #                       bidirectional=True, flow_te=True)
+    # ipsgt = IpSegregation(flowsgt_config, time_window=5, time_out=20, sequence_max=32, bidirectional=True)
     # ipsgt.ip_segregate()
 
-    ''' Model Training (step 3) '''
+    ''' Data Shuffling (step 3) '''
+    shuffle_config = {
+        'input_path': "F:/gure/1_1winsgt16.hd5",
+        'output_dir': "F:/gure",
+        'meta_path': "E:/data/gure/meta/mappings_winsgt16.hd5",
+    }
 
-    # meta_path = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings.hd5"
-    # train_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week1_ipsgt32.hd5"
-    # dev_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week2_ipsgt32.hd5"
+    # hd5huffler = DatasetShuffler(shuffle_config)
+    # hd5huffler.shuffle(n_splits=3, test_size=0.1)
 
-    meta_path = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normaltrimmed.hd5"
-    train_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-train_normaltrimmed_ipsgt4.hd5"
-    dev_dir = "E:/data/CIDDS-001/OpenStack/processed_test/CIDDS-001-test_normaltrimmed_ipsgt4.hd5"
-    validation_dir = None
-    resume_checkpoint = False  # test / continue training from last epoch
+    ''' Model Training (step 4) '''
+
+    dataset_meta = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/mappings_ipsgt32.hd5"
+    # dataset_meta = "E:/data/CIDDS-001/OpenStack/processed_test/mappings_normal.hd5"  # test
+
+    train_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week1_ipsgt32.hd5"
+    # train_dir = "F:/CIDDS-001/CIDDS-001-internal-week1_winsgt8.hd5"
+    # train_dir = "E:/data/CIDDS-001/OpenStack/processed_test/normal/CIDDS-001-train_winsgt8.hd5"  # test
+
+    dev_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/CIDDS-001-internal-week2_ipsgt32.hd5"
+    # dev_dir = "F:/CIDDS-001/CIDDS-001-internal-week2_winsgt8.hd5"
+    # dev_dir = "E:/data/CIDDS-001/OpenStack/processed_test/normal/CIDDS-001-test_winsgt8.hd5"  # test
+
+    saver_dir = "E:/data/CIDDS-001/OpenStack/processed/minmax1r/checkpoints"
+    # saver_dir = "F:/CIDDS-001/checkpoints"
+    # saver_dir = "E:/data/CIDDS-001/OpenStack/processed_test/checkpoints"  # test
+
+    # checkpoint_dir = "F:/CIDDS-001/checkpoints"  # checkpoint directory to resume from, else None
+    checkpoint_dir = None
 
     model_config = {
         'class_type': 2,  # 0: 2-class, 1: 3-class, 2: 5-class, 3: 9-class
+        'data_type': 'ip',
+        'batch_n_test': 53101,  # ipsgt3: 51969
 
         'hyperparameters': {
-            'sequence_max_n': 4,
-            'batch_n': 8,  # 1 when performing tests
-            'epochs_n': 100,
-            'units_n': 32,
+            'sequence_max_n': 32,
+            'batch_n': 64,
+            'epochs_n': 30,
+            'units_n': 128,
             'layers_n': 1,
-            'dropout_r': 0.5,  # 0 when performing tests
+            'dropout_r': 0.4,  # 0 when performing tests
             'learning_r': 0.01,
             'decay_r': 0.96
         }
     }
 
-    # myModel = ModelTrainer(model_config, resume_checkpoint, meta_path)
+    # myModel = ModelTrainer(model_config, dataset_meta, checkpoint_dir, saver_dir)
     # myModel.train(train_dir, dev_dir)

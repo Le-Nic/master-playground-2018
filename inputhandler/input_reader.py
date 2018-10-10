@@ -4,7 +4,7 @@ import numpy as np
 
 class InputReader:
     def __init__(self, data_file, labels_file=None, label_loc=None,
-                 dtypes=None, parse_dates=False, read_chunk_size=10**6):
+                 dtypes=None, parse_dates=False, read_chunk_size=10**6, delimiter=','):
         """
         label in last column: InputReader("E:/test.csv", label_loc=-1) # support multiple columns
         label in separate file: InputReader("E:/test_x.csv", labels_file="E:/test_y.csv")
@@ -27,6 +27,7 @@ class InputReader:
         self.dtypes = dtypes
         self.parse_dates = False if not parse_dates else parse_dates
         self.read_chunk_size = read_chunk_size
+        self.sep = delimiter
 
         if label_loc:
             self.next_input = self._get_data_lb_loc
@@ -48,14 +49,15 @@ class InputReader:
 
     def _get_data_reader(self):
         """ get reader object for data """
-        self.data_reader = pd.read_csv(self.data_file, iterator=True, dtype=self.dtypes, error_bad_lines=False,
-                                       header=None, parse_dates=self.parse_dates, chunksize=self.read_chunk_size,
-                                       skipinitialspace=True, float_precision='round_trip')
+        self.data_reader = pd.read_csv(self.data_file, sep=self.sep, iterator=True, dtype=self.dtypes,
+                                       error_bad_lines=False, header=None, parse_dates=self.parse_dates,
+                                       chunksize=self.read_chunk_size, skipinitialspace=True,
+                                       float_precision='round_trip')
 
     def _get_labels_reader(self):
         """ get reader object for labels """
-        self.labels_reader = pd.read_csv(self.labels_file, iterator=True, dtype=np.object, error_bad_lines=False,
-                                         header=None, chunksize=self.read_chunk_size,
+        self.labels_reader = pd.read_csv(self.labels_file, sep=self.sep, iterator=True, dtype=np.object,
+                                         error_bad_lines=False, header=None, chunksize=self.read_chunk_size,
                                          skipinitialspace=True, float_precision='round_trip') \
             if self.labels_file else None
 

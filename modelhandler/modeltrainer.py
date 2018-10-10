@@ -1,5 +1,7 @@
 from modelhandler.lstmodel import *
 from modelhandler.inputgenerator import Generator
+
+from sklearn.metrics import confusion_matrix
 import tensorflow as tf
 import numpy as np
 import tables as tb
@@ -11,12 +13,22 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class ModelTrainer(object):
-    def __init__(self, configs, resume_checkpoint=False, meta_path=None):
+    def __init__(self, configs, dataset_meta, checkpoint_dir=None, saver_dir=None):
         self.seed_value = 147
 
         self.hyperparams = configs['hyperparameters']
-        self.resume = resume_checkpoint
         self.class_type = configs['class_type']
+        self.data_type = configs['data_type']
+        self.batch_n_test = configs['batch_n_test']
+
+        self.checkpoint_dir = checkpoint_dir + "/" if checkpoint_dir is not None else None
+        self.saver_dir = saver_dir + "/" if saver_dir is not None else ""
+        self.model_name = "s" + str(self.hyperparams['sequence_max_n']) + \
+                          "b" + str(self.hyperparams['batch_n']) + \
+                          "u" + str(self.hyperparams['units_n']) + \
+                          "l" + str(self.hyperparams['layers_n']) + \
+                          "d" + str(int(self.hyperparams['dropout_r']*100)) + \
+                          "y" + str(self.class_type)
 
         print("[MT Config.] Sequence:", self.hyperparams['sequence_max_n'])
         print("[MT Config.] Batch size:", self.hyperparams['batch_n'])
@@ -26,18 +38,18 @@ class ModelTrainer(object):
         print("[MT Config.] Dropout rate:", self.hyperparams['dropout_r'])
         print("[MT Config.] Learning rate:", self.hyperparams['learning_r'])
 
-        if meta_path:
-            meta_h5 = tb.open_file(meta_path, mode='r')
+        try:
+            self.y_dict = dataset_meta['y_dict']
+            self.features_len = dataset_meta['features_len']
+
+        except TypeError:
+            meta_h5 = tb.open_file(dataset_meta, mode='r')
             self.y_dict = dict(enumerate(meta_h5.get_node("/y" + str(self.class_type)).read()))
             self.features_len = len(meta_h5.get_node("/x").read())
 
             print("[ModelTrainer] Features length:", self.features_len)
-            print("[ModelTrainer] Labels:",  ', '.join(['{0} - {1}'.format(k, v.decode("utf-8"))
-                                                        for k, v in self.y_dict.items()]))
-
-        else:
-            self.y_dict = None  # TODO: unknown labels and features length (nid ways to input this)
-            self.features_len = None
+            print("[ModelTrainer] Labels:", ', '.join(['{0} - {1}'.format(k, v.decode("utf-8"))
+                                                       for k, v in self.y_dict.items()]))
 
         self.model_train = None
         self.model_dev = None
@@ -55,20 +67,21 @@ class ModelTrainer(object):
 
         if data_path.is_dir():
             for child in data_path.iterdir():
-                file_count += 1
 
-                datasets.append({
-                    'name': child.stem,
-                    'path': str(child),
-                    'gen': Generator(str(child), self.class_type)
-                }) if pathlib.Path(child).is_file() else None
+                if pathlib.Path(child).is_file():
+                    datasets.append({
+                        'name': child.stem,
+                        'path': str(child),
+                        'gen': Generator(str(child), self.class_type, True if self.data_type == 'ip' else False)
+                    })
+                    file_count += 1
 
         elif data_path.is_file():
             file_count += 1
             datasets.append({
                 'name': data_path.stem,
                 'path': data_dir,
-                'gen': Generator(data_dir, self.class_type)
+                'gen': Generator(data_dir, self.class_type, True if self.data_type == 'ip' else False)
             })
 
         print("[ModelTrainer]", file_count, "dataset(s) found in >", data_dir)
@@ -78,9 +91,11 @@ class ModelTrainer(object):
 
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=(tf.float32, tf.int32, tf.int32),
+            output_types=(tf.float32, tf.int32, tf.int32) if self.data_type == 'ip' else
+            (tf.float32, tf.int32),
             output_shapes=(tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]),
-                           tf.TensorShape([]), tf.TensorShape([]))
+                           tf.TensorShape([]), tf.TensorShape([])) if self.data_type == 'ip' else
+            (tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]), tf.TensorShape([]))
         )
         dataset = dataset.batch(batch_size, drop_remainder=True)
         # dataset = dataset.padded_batch(self.hyperparams['batch_n'], padded_shapes=[])
@@ -88,43 +103,93 @@ class ModelTrainer(object):
 
         return dataset.make_one_shot_iterator().get_next()
 
-    def train(self, train_dir, dev_dir):
-
-        self.model_train = LSTModel(
-            tf.placeholder(
-                tf.float32, name="features",
-                shape=[self.hyperparams['batch_n'], self.hyperparams['sequence_max_n'], self.features_len]
-            ),
-            tf.placeholder(tf.int32, name="labels", shape=self.hyperparams['batch_n']),
-            tf.placeholder(tf.int32, name="sequences", shape=self.hyperparams['batch_n']),
-            # tf.placeholder(
-            #     tf.float32,
-            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
-            # ),  # passing state to next batch
-            self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True
-        )
-        trainsets = self._get_files(train_dir)
-
-        for trainset in trainsets:
-            print("[ModelTrainer] Training Set instances:", trainset['gen'].get_instances())
-
-        self.model_dev = LSTModel(
-            tf.placeholder(
-                tf.float32, name="features",
-                shape=[1, self.hyperparams['sequence_max_n'], self.features_len]
-            ),
-            tf.placeholder(tf.int32, name="labels", shape=1),
-            tf.placeholder(tf.int32, name="sequences", shape=1),
-            # tf.placeholder(
-            #     tf.float32,
-            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
-            # ),  # passing state to next batch
-            self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False
-        )
-        devsets = self._get_files(dev_dir)
+    def validate(self, sess, devsets):
+        predictions = []
+        ground_truth = []
+        acc_dev = 0
+        step_dev = 0
 
         for devset in devsets:
-            print("[ModelTrainer] Testing Set instances:", devset['gen'].get_instances())
+            next_element = self._dataset_prep(devset['gen'], self.batch_n_test)
+
+            try:
+                while True:
+                    features_batched, label_batched, seq_batched = sess.run(next_element)
+                    # features_batched, label_batched = sess.run(next_element)
+
+                    pred, acc = sess.run(
+                        self.model_dev.error,
+                        feed_dict={
+                            self.model_dev.features_placeholder: features_batched,
+                            self.model_dev.label_placeholder: label_batched,
+                            self.model_dev.seq_placeholder: seq_batched
+                        }
+                    )
+                    predictions.extend(pred)
+                    ground_truth.extend(label_batched)
+
+                    acc_dev += acc
+                    step_dev += 1
+
+            except tf.errors.OutOfRangeError:
+                pass
+
+        return confusion_matrix(ground_truth, predictions,
+                                labels=[label for label in range(len(self.y_dict))]), round(acc_dev / step_dev, 6)
+
+    def train(self, train_dir, dev_dir):
+        np.random.seed = self.seed_value
+        tf.set_random_seed(self.seed_value)
+
+        trainsets = self._get_files(train_dir)
+        devsets = self._get_files(dev_dir)
+
+        for trainset in trainsets:
+            print("[ModelTrainer] Train Set instances:", trainset['gen'].get_instances())
+        for devset in devsets:
+            print("[ModelTrainer] Dev Set instances:", devset['gen'].get_instances())
+
+        if self.data_type == 'ip':
+            self.model_train = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.hyperparams['batch_n'],
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=self.hyperparams['batch_n']),
+                'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.hyperparams['batch_n'])
+                # 'states': tf.placeholder(
+                #     tf.float32,
+                #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+                # ),  # passing state to next batch
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True)
+        else:
+            self.model_train = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.hyperparams['batch_n'],
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=self.hyperparams['batch_n'])
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True)
+
+        if self.data_type == 'ip':
+            self.model_dev = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.batch_n_test,
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=self.batch_n_test),
+                'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.batch_n_test)
+                # 'states': tf.placeholder(
+                #     tf.float32,
+                #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+                # ),  # passing state to next batch
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False)
+        else:
+            self.model_dev = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.batch_n_test,
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=self.batch_n_test)
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False)
+
+        saver = tf.train.Saver()
 
         with tf.Session() as sess:
             # summary_writer = tf.summary.FileWriter('./logs', graph_def=sess.graph_def)  # tensorboard
@@ -147,10 +212,19 @@ class ModelTrainer(object):
 
             # h5_r.close()
 
-            tf.set_random_seed(self.seed_value)
-            sess.run(tf.global_variables_initializer())
+            epoch_current = 0
 
-            for _ in range(self.hyperparams['epochs_n']):
+            if self.checkpoint_dir:
+                saver.restore(sess, self.checkpoint_dir + self.model_name + ".ckpt")
+                with open(self.checkpoint_dir + "epoch", "r") as f:
+                    epoch_current = int(f.read())
+
+                print("[ModelTrainer] Model restored")
+                print(self.validate(sess, devsets))
+            else:
+                sess.run(tf.global_variables_initializer())
+
+            for epoch_n in range(epoch_current, self.hyperparams['epochs_n']):
                 t = time.time()
                 loss_train = 0
                 acc_train = 0
@@ -166,6 +240,7 @@ class ModelTrainer(object):
                     try:
                         while True:
                             features_batched, label_batched, seq_batched = sess.run(next_element)
+                            # features_batched, label_batched = sess.run(next_element)
 
                             (_, loss), (_, acc) = sess.run(  # error prior backpropagation
                                 [self.model_train.optimize, self.model_train.error],
@@ -194,53 +269,19 @@ class ModelTrainer(object):
                     except tf.errors.OutOfRangeError:
                         pass
 
-                epoch_n = sess.run(self.model_train.add_global_step)
+                # epoch_n = sess.run(self.model_train.add_global_step)
+                saver.save(sess, self.saver_dir + self.model_name)
+                with open(self.saver_dir + "epoch", 'w+') as f:
+                    f.write(str(epoch_n + 1))
 
-                if not (epoch_n % 10):
-                    predictions = []
-                    ground_truth = []
-                    acc_dev = 0
-                    step_dev = 0
-
-                    for devset in devsets:
-                        next_element = self._dataset_prep(devset['gen'], 1)
-
-                        try:
-                            while True:
-                                features_batched, label_batched, seq_batched = sess.run(next_element)
-                                pred, acc = sess.run(
-                                    self.model_dev.error,
-                                    feed_dict={
-                                        self.model_dev.features_placeholder: features_batched,
-                                        self.model_dev.label_placeholder: label_batched,
-                                        self.model_dev.seq_placeholder: seq_batched
-                                    }
-                                )
-                                predictions.extend(pred)
-                                ground_truth.extend(label_batched)
-
-                                # if pred_positive[0]:
-                                #     try:
-                                #         class_postives[label_batched[0]] += 1
-                                #     except KeyError:
-                                #         class_postives[label_batched[0]] = 1
-                                # else:
-                                #     try:
-                                #         class_negatives[label_batched[0]] += 1
-                                #     except KeyError:
-                                #         class_negatives[label_batched[0]] = 1
-
-                                acc_dev += acc
-                                step_dev += 1
-
-                        except tf.errors.OutOfRangeError:
-                            pass
-
-                    print("[ModelTrainer] acc: %.6f, truth:" % round(acc_dev/step_dev, 6), ground_truth,
-                          "predictions:", predictions)
-
-                print("[ModelTrainer] Epoch " + str(epoch_n) +
-                      ", loss: %.6f" % round(loss_train/step_train, 6) +
-                      ", acc: %.6f" % round(acc_train/step_train, 6) +
+                print("[ModelTrainer] Epoch " + str(epoch_n + 1) +
+                      ", loss: %.6f" % round(loss_train / step_train, 6) +
+                      ", acc: %.6f" % round(acc_train / step_train, 6) +
                       ", time elapsed: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
+                if not ((epoch_n + 1) % 5):
+                    cm, acc = self.validate(sess, devsets)
+
+                    print("[ModelTrainer] acc: %.6f, time elapsed:" % acc,
+                          time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+                    print(cm)

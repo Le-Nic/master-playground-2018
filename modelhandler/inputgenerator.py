@@ -3,23 +3,29 @@ import tables as tb
 
 class Generator:
     # https://stackoverflow.com/questions/48309631/tensorflow-tf-data-dataset-reading-large-hdf5-files
-    def __init__(self, filepath, class_type):
+    def __init__(self, filepath, class_type, is_seq):
         self.file_path = filepath
         self.class_type = '/y/y' + str(class_type)
+        self.is_seq = is_seq
         self.dataset_n = None
 
     def __call__(self):
 
         # # instances: 3487772, Epoch 1: 05:06m, Epoch 2: 05:09m
         h5_r = tb.open_file(self.file_path, mode='r')
-        x_r = h5_r.get_node("/x")
+        x_r = h5_r.get_node('/x')
         y_r = h5_r.get_node(self.class_type)
-        seq_r = h5_r.get_node("/seq")
+        seq_r = h5_r.get_node('/seq')
 
-        assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+        if self.is_seq:
+            assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+            for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
+                yield (data, label, sequence)
 
-        for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
-            yield (data, label, sequence)
+        else:
+            assert x_r.shape[0] == y_r.shape[0]
+            for data, label in zip(x_r.iterrows(), y_r.iterrows()):
+                yield (data, label)
 
         h5_r.close()
 
@@ -31,7 +37,7 @@ class Generator:
     def get_instances(self):
         if self.dataset_n is None:
             h5_r = tb.open_file(self.file_path, mode='r')
-            self.dataset_n = h5_r.get_node("/x").shape[0]
+            self.dataset_n = h5_r.get_node('/x').shape[0]
             h5_r.close()
 
         return self.dataset_n
