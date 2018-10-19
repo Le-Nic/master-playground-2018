@@ -4,6 +4,7 @@ import pathlib
 import time
 
 
+# DEPRECIATED: update format, and add time
 class IpSegregation(object):
     """
     NOTE: 3-class (y1) and 9-class (y3) labels should not be used when the bidirectional parameter is True. The

@@ -56,7 +56,11 @@ class WindowSegregation(object):
                 meta_h5.close()
 
                 # create new meta file with extra feature column (is_source_ip)
-                meta_h5 = tb.open_file(self.io['features_len'] + "_winsgt" + str(self.sequence_max), mode='w')
+                meta_h5 = tb.open_file(
+                    str(pathlib.Path(self.io['features_len']).parent) + self.io['meta_output_name'] +
+                    "_winsgt" + str(self.sequence_max), mode='w'
+                )
+
                 for k, data in meta_data.items():
                     if k == "x":
                         meta_h5.create_array(meta_h5.root, k, np.append(data, "is_src"), meta_desc[k])

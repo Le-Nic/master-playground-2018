@@ -1,0 +1,50 @@
+{
+    'io_csv': {
+        'train_dir': 'E:/data/gure',
+        'test_dir': None,
+        'output_dir': 'E:/data/gure/processed',
+        'output_type': 'hd5',
+        'read_chunk_size': 2000000,
+        'delimiter': ' ',
+        'header': None,
+        # parsing ith column(s) as dates
+        'dates': [],
+        'is_epoch': True,
+        # input data types for each column (omit labels if it's in separate file)
+        'dtypes_in': {
+            0: np.int64, 1: np.float64, 2: np.object, 3: np.object, 4: np.object, 5: np.object,  # id ts sp dp sa da
+            6: np.float64, 7: np.object, 8: np.object, 9: np.object,  # intrinsic
+            10: np.int64, 11: np.int64, 12: np.int64, 13: np.int64, 14: np.int64,
+            15: np.int64, 16: np.int64, 17: np.int64, 18: np.int64, 19: np.int64, 20: np.int64,  # content
+            21: np.int64, 22: np.int64, 23: np.int64, 24: np.int64, 25: np.int64, 26: np.int64, 27: np.int64,
+            28: np.int64, 29: np.int64, 30: np.float64, 31: np.float64,  # time traffic
+            64: np.float64, 33: np.float64, 34: np.float64, 35: np.float64, 36: np.float64,
+            37: np.int64, 38: np.int64, 39: np.float64, 40: np.float64, 41: np.float64,  # machine traffic
+            42: np.float64, 43: np.float64, 44: np.float64, 45: np.float64, 46: np.float64,
+            47: np.object  # lbl
+        }
+    },
+
+    'normalization': None,
+
+    # duration are treated as second with %.3f decimal places, and will be added into time column
+    'add_td': 6,  # if dataset uses 'ts' column: input duration column, else: input None (format used: %s.%µs)
+    'td_scale': 1,  # value for multiplication in order to convert duration to second (%s.%µs)
+    'label': {
+        'i': [47],  # col to use (max len: 2), treating ith column(s) until as label(s)
+        'lbl_normal': [np.nan]
+        # the value of label which is "benign/normal" (same alignment w/ index above)
+    },
+    'pp': {
+        't': [1],  # day & week cyclical transformation
+        'ips': [4, 5],
+        '1hot': [7, 9],
+        'flg': [],  # .A.... -> 010000 (6)
+        '8bit': [],  # 4 -> 00000100 (8)
+        '16bit': [2, 3, 8],  # 4 -> 0000000000000100 (16)
+        'norm': [
+            # 6, 10, 11, 13, 14, 15, 16, 18, 20, 21, 22, 23, 24, 25, 28, 29, 37, 38
+        ],  # apply technique selected in 'normalization'
+        'rm': [0]  # col(s) to remove
+    }
+}

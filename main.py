@@ -24,13 +24,12 @@ if __name__ == '__main__':
 
     ''' Features Preprocessing (step 1) '''
 
-    with open("configs/gure", 'r') as config_file:
+    with open("configs/cicids.txt", 'r') as config_file:
         pp_config = eval(config_file.read())
-    print(pp_config['pp'])
 
     # pp = PreProcessing(pp_config)
     # pp.get_metadata()
-    # pp.save_metadata()
+    # pp.save_metadata("E:/data/CICIDS/meta")
     # pp.transform_trainset()
     # pp.transform_testset()
 
@@ -53,9 +52,9 @@ if __name__ == '__main__':
 
     # GURE
     flowsgt_config = {
-        'input_dir': "E:/data/gure/processed",
-        'output_dir': "F:/gure",
-        'features_len': "E:/data/gure/meta/mappings.hd5",
+        'input_dir': "E:/data/CICIDS/processed",
+        'output_dir': "F:/CICIDS",
+        'features_len': "E:/data/CICIDS/meta/mappings.hd5",
     }
 
     # winsgt = WindowSegregation(flowsgt_config, sequence_max=16, ip_segt=True, single_output=True)
@@ -66,9 +65,9 @@ if __name__ == '__main__':
 
     ''' Data Shuffling (step 3) '''
     shuffle_config = {
-        'input_path': "F:/gure/1_1winsgt16.hd5",
-        'output_dir': "F:/gure",
-        'meta_path': "E:/data/gure/meta/mappings_winsgt16.hd5",
+        'input_path': "E:/data/CICIDS/winsgt/1_1winsgt16.hd5",
+        'output_dir': "F:/CICIDS",
+        'meta_path': "E:/data/CICIDS/meta/mappings.hd5_winsgt16",
     }
 
     # hd5huffler = DatasetShuffler(shuffle_config)

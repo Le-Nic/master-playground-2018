@@ -1,38 +1,52 @@
-from inputhandler.input_reader import InputReader
+from inputhandler import input_reader
 from sklearn.preprocessing import OneHotEncoder
 from datetime import datetime
 import numpy as np
 import tables as tb
 import math
 import pathlib
+import os
 import time
 
 
 class PreProcessing:
 
-    def __init__(self, configs, mappings=None):
+    def __init__(self, configs):
 
         # get configs. information
-        self.io = configs['io']
         self.col = configs['pp']
         self.normalization = configs['normalization']
         self.lbl = configs['label']
 
-        self.ts = configs['ts']
+        self.add_td = configs['add_td']
+        self.td_scale = configs['td_scale']
 
-        if mappings:
-            None  # TODO: check and get dictionaries mapping for 1-hot, able to continue where it left off
-        else:
-            self.x_map = {}  # mappings for features
-            self.y_map = []  # mappings for labels
-            self.x_unq = {}  # sets for uniques
-            self.y_unq = {}
-            self.x_len = {}  # length for arrays init.
-            self.val = {}  # values for normalization
+        self.x_map = {}  # mappings for features (1hot & IP)
+        self.y_map = []  # mappings for labels
+        self.x_unq = {}  # sets for uniques
+        self.y_unq = {}
+        self.x_len = {}  # length for arrays init. (1hot)
+        self.val = {}  # values for normalization
 
         # get datasets readers from specified directory
-        self.trainsets = self._get_files(self.io['train_dir'])
-        self.testsets = self._get_files(self.io['test_dir'])
+        try:
+            self.io = configs['io_csv']
+            self.trainsets = self._get_files(self.io['train_dir'], True)
+            self.testsets = self._get_files(self.io['test_dir'], True)
+            self.meta_migrate = False
+
+        except KeyError:
+            self.io = configs['io_hd5']
+            self.trainsets = self._get_files(self.io['train_dir'], False)
+            self.testsets = self._get_files(self.io['test_dir'], False)
+
+            if self.trainsets is not None:
+                self.io['read_chunk_size'] = self.io['read_chunk_size'] * self.trainsets[0]['reader'].sequence_n
+
+            self.meta_migrate = True
+
+        if not self.meta_migrate and self.io['csv_output']:
+            print("[WARNING] [PreProcessing] CSV output is not supported, using CSV input")
 
         if self.trainsets is None and self.testsets is None:
             raise FileNotFoundError("[Error] [PreProcessing] No input files found")
@@ -98,19 +112,22 @@ class PreProcessing:
             self.get_norm_val = self._none
             print("[PreProcessing] Normalization omitted")
 
-        if self.ts is not None:  # ms + duration
-            if self.io['is_epoch']:
-                self.get_epoch = lambda x, col_n: x[:, col_n] + x[:, self.ts]
-            else:
-                self.get_epoch = lambda x, col_n: x[:, col_n] \
-                                                      .astype('datetime64[ms]').astype('int64') / 1000 + x[:, self.ts]
-        else:  # ms
-            if self.io['is_epoch']:
-                self.get_epoch = lambda x, col_n: x[:, col_n]
-            else:
-                self.get_epoch = lambda x, col_n: x[:, col_n].astype('datetime64[ms]').astype('int64') / 1000
+        if self.meta_migrate:
+            self.get_epoch = self._none
+        else:
+            if self.add_td is not None:  # ms + duration
+                if self.io['is_epoch']:
+                    self.get_epoch = lambda x, col_n: x[:, col_n] + (x[:, self.add_td] * self.td_scale)  # tested
+                else:
+                    self.get_epoch = lambda x, col_n: (x[:, col_n].astype('datetime64[ms]').astype('int64') / 1000
+                                                       ) + (x[:, self.add_td] * self.td_scale)
+            else:  # ms
+                if self.io['is_epoch']:
+                    self.get_epoch = lambda x, col_n: x[:, col_n]
+                else:
+                    self.get_epoch = lambda x, col_n: x[:, col_n].astype('datetime64[ms]').astype('int64') / 1000
 
-    def _get_files(self, data_dir):
+    def _get_files(self, data_dir, is_csv):
         """ assign Reader for each dataset found """
         if data_dir is None:
             return []
@@ -126,9 +143,11 @@ class PreProcessing:
 
                 datasets.append({
                     'name': child.stem,
-                    'reader': InputReader(str(child), label_loc=self.lbl['i'],
-                                          dtypes=self.io['dtypes_in'], parse_dates=self.io['dates'],
-                                          read_chunk_size=self.io['read_chunk_size'], delimiter=self.io['delimiter'])
+                    'reader': input_reader.CsvReader(
+                        str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
+                        parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
+                        delimiter=self.io['delimiter'], header=self.io['header']
+                    ) if is_csv else input_reader.Hd5Reader(str(child), read_chunk_size=self.io['read_chunk_size'])
                 }) if pathlib.Path(child).is_file() else None
 
         elif data_path.is_file():
@@ -136,9 +155,11 @@ class PreProcessing:
 
             datasets.append({
                 'name': data_path.stem,
-                'reader': InputReader(data_dir, label_loc=self.lbl['i'],
-                                      dtypes=self.io['dtypes_in'], parse_dates=self.io['dates'],
-                                      read_chunk_size=self.io['read_chunk_size'], delimiter=self.io['delimiter'])
+                'reader': input_reader.CsvReader(
+                    data_dir, label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
+                    parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
+                    delimiter=self.io['delimiter'], header=self.io['header']
+                ) if is_csv else input_reader.Hd5Reader(data_dir, read_chunk_size=self.io['read_chunk_size'])
             })
 
         print("[PreProcessing]", file_count, "file(s) found in >", data_dir)
@@ -174,19 +195,20 @@ class PreProcessing:
 
             instance_num -= (self.io['read_chunk_size'] - x.shape[0])
             self.instances += instance_num
-            print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:", time.time() - t)
+            print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:",
+                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
         # second iteration (obtain IPs from testset, NOTE: depends on usage, this block should be removed)
         for testset in self.testsets:
             t = time.time()
             print("[PreProcessing] [metadata] Processing >", testset['name'])
 
-            x, y = (None,) * 2
+            x = None
             next_chunk = True
             instance_num = 0
 
             while next_chunk:
-                x, y, next_chunk = testset['reader'].next()
+                x, _, next_chunk = testset['reader'].next()
                 instance_num += self.io['read_chunk_size']
 
                 for col_num in self.col['ips']:  # IPs
@@ -194,7 +216,8 @@ class PreProcessing:
 
             instance_num -= (self.io['read_chunk_size'] - x.shape[0])
             self.instances += instance_num
-            print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:", time.time() - t)
+            print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:",
+                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
         # finishing calculation of mean / output info.
         for col_num in self.val:
@@ -257,7 +280,7 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 self.columns_map[i + col_num + 1] += 3
 
-        for col_num in (self.col['1hot'] + [self.col['ips'][0]]):
+        for col_num in (self.col['1hot'] + ([self.col['ips'][0]] if len(self.col['ips']) > 0 else [])):
             self.x_map[col_num] = {v: k for k, v in enumerate(self.x_unq[col_num])}
             self.x_len[col_num] = len(self.x_map[col_num])  # unused for IP field
 
@@ -287,16 +310,45 @@ class PreProcessing:
                 if item is not None:
                     self.columns_map[i + col_num + 1] -= 1
 
-    def save_metadata(self):
+    def save_metadata(self, save_dir=None, name="/mappings"):
 
-        print("[PreProcessing] [metadata] Saving meta info. >", self.io['output_dir'] + "/mappings.hd5")
+        if save_dir is None:
+            save_dir = self.io['output_dir']
+        save_path = save_dir + name + ".hd5"
 
-        pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
-        meta_fo = tb.open_file(self.io['output_dir'] + "/mappings.hd5", mode='w')
+        print("[PreProcessing] [metadata] Saving meta info. >", save_path)
 
-        # features' header
+        pathlib.Path(save_dir).mkdir(parents=True, exist_ok=True)
+        meta_fo = tb.open_file(save_path, mode='w')
+
+        # features' header initialization
         x_map = np.empty(self.features_n, dtype="S32")
         x_map[:] = ''
+        meta_prev = {}  # previous meta data
+        meta_prev_desc = {}
+
+        if self.meta_migrate and pathlib.Path(self.io['meta_path']).is_file():
+            meta_fi = tb.open_file(self.io['meta_path'], mode='r')
+
+            meta_h5_iter = iter(meta_fi)
+            next(meta_h5_iter)  # skip root node (/)
+
+            # get data from meta file
+            for node in meta_h5_iter:
+                meta_prev[node._v_name] = node.read()
+                meta_prev_desc[node._v_name] = node._g_gettitle()
+
+            # save columns' name from previous meta
+            for k, data in meta_prev.items():
+                if k == "x":
+                    for col_num, col in enumerate(data):
+                        if self.columns_map[col_num] is not None:
+                            x_map[self.columns_map[col_num]] = col
+                else:
+                    meta_fo.create_array(meta_fo.root, k, data, meta_prev_desc[k])
+
+            meta_fi.close()
+
         for col, col_nums in self.col.items():
             if col == 't':
                 cyclic_type = ["_sin", "_cos"]
@@ -307,7 +359,7 @@ class PreProcessing:
             elif col == '1hot':
                 for i, col_num in enumerate(col_nums):
                     for j, unq in enumerate(self.x_unq[col_num]):
-                        x_map[self.columns_map[col_num]+j] = col + str(i+1) + ": " + unq
+                        x_map[self.columns_map[col_num]+j] = col + str(i+1) + ": " + str(unq)
             elif col == 'rm' or col == 'ips':
                 pass
             else:
@@ -383,70 +435,136 @@ class PreProcessing:
         datetime_utc = datetime.utcfromtimestamp(epoch)
 
         return (datetime_utc.isoweekday() / 7), \
-            ((datetime_utc.hour * 3600) + (datetime_utc.minute * 60) + (datetime_utc.second) +
-             (datetime_utc.microsecond/1000000)) / 86400  # 24*60*60
+            ((datetime_utc.hour * 3600) + (datetime_utc.minute * 60) + datetime_utc.second +
+             (datetime_utc.microsecond/1000000)) / 86400  # convert various time to (%s.%µs format)
 
     def transform_trainset(self):
         """ starts preprocessing of training dataset(s) """
         pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
 
         for trainset in self.trainsets:
+            t = time.time()
+
             print("[PreProcessing] [operation] Processing trainset >", trainset['name'])
-            train_fo = tb.open_file(self.io['output_dir'] + "/" + trainset['name'] + ".hd5", mode='w')
+
+            output_name = self.io['output_dir'] + "/" + trainset['name']
+            train_fo = tb.open_file(output_name + ".hd5", mode='w')
 
             array_x = train_fo.create_earray(train_fo.root, "x", tb.Float64Atom(shape=()),
-                                             (0, self.features_n), "Feature Data")
+                                             (0, self.trainsets[0]['reader'].sequence_n, self.features_n)
+                                             if self.meta_migrate else (0, self.features_n), "Feature Data")
 
             array_t = train_fo.create_earray(train_fo.root, "t", tb.Float64Atom(shape=()),
-                                             (0, len(self.col['t'])), "Time")
+                                             (0,) if self.meta_migrate else (0, len(self.col['t'])), "Time")
 
             array_ip = train_fo.create_earray(train_fo.root, "ip", tb.Int64Atom(shape=()),
-                                              (0, len(self.col['ips'])), "IP Addresses")
+                                              (0, 2) if self.meta_migrate else (0, len(self.col['ips'])),
+                                              "IP Addresses") if self.col['ips'] or self.meta_migrate else None
 
             array_ys = []
             lbl_group = train_fo.create_group(train_fo.root, "y")
-            for n in range(self.lbl_type_n):
+            labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
+            for n in range(labels_n):
                 array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
                                                        (0,), "Label type " + str(n)))
 
+            # HD5/CSV Input
+            if self.meta_migrate:
+                array_seq = train_fo.create_earray(train_fo.root, "seq", tb.Int32Atom(),
+                                                   (0,), "Dataset Sequence Length")
+            else:
+                array_seq = None
+
+            # CSV/HD5 Output
+            if not self.io['csv_output']:
+                x_csv = None
+                ys_csv = None
+            else:
+                # CSV: add header and remove existing file (due to append mode writing on previous file if they exist)
+                with open(output_name + "_x.csv", 'wb') as x_csvheader:
+                    np.savetxt(x_csvheader, [range(self.features_n)], delimiter=",", fmt='%i')
+
+                for n in range(labels_n):
+                    try:
+                        os.remove(output_name + "_y" + str(n) + ".csv")
+                    except OSError:
+                        pass
+
+                x_csv = open(output_name + "_x.csv", 'ab')
+                ys_csv = [open(output_name + "_y" + str(n) + ".csv", 'ab')
+                          for n in range(labels_n)]
+
             next_chunk = True
             while next_chunk:
-                x, y, next_chunk = trainset['reader'].next()
+                x, misc, next_chunk = trainset['reader'].next()
                 cur_shape = self.io['read_chunk_size'] if next_chunk else x.shape[0]
                 x_new = np.zeros((cur_shape, self.features_n))
-                t_new = np.zeros((cur_shape, len(self.col['t'])))
-                ip_new = np.zeros((cur_shape, len(self.col['ips'])))
-                y_new = np.zeros(cur_shape)
 
-                # t (gmt)
-                for i, col_num in enumerate(self.col['t']):
-                    epochs = self.get_epoch(x, col_num)
+                if self.meta_migrate:
+                    t_new = misc[0]
+                    ip_new = misc[1]
+                    array_seq.append(misc[2])
 
-                    t_new[:, i] = epochs
-                    day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+                    for n, y_w in enumerate(array_ys):
+                        y_w.append(misc[3 + n])
 
-                    if self.normalization == 'minmax1r':
-                        x_new[:, self.columns_map[col_num]] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num]+1] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num]+2] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
-                        x_new[:, self.columns_map[col_num]+3] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+                        if self.io['csv_output']:
+                            np.savetxt(ys_csv[n], misc[3 + n][np.newaxis].T, fmt='%i')
 
-                    else:  # zscore normalization is not taken care of
-                        x_new[:, self.columns_map[col_num]] = np.sin(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num]+1] = np.cos(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num]+2] = np.sin(2 * np.pi * day_ofweek)
-                        x_new[:, self.columns_map[col_num]+3] = np.cos(2 * np.pi * day_ofweek)
+                else:
+                    t_new = np.zeros((cur_shape, len(self.col['t'])))
+                    ip_new = np.zeros((cur_shape, len(self.col['ips'])))
+                    y_new = np.zeros(cur_shape)
 
-                    # df = pd.DataFrame()  # import pandas as pd
-                    # df['sine'] = np.sin(2 * np.pi * sec_ofday)
-                    # df['cosine'] = np.cos(2 * np.pi * sec_ofday)
-                    # df.plot.scatter('sine', 'cosine').set_aspect('equal')
-                    # plt.show()  # import matplotlib.pyplot as plt
+                    # t (gmt)
+                    for i, col_num in enumerate(self.col['t']):
+                        epochs = self.get_epoch(x, col_num)
 
-                # ips
-                for i, col_num in enumerate(self.col['ips']):
-                    ip_new[:, i] = np.vectorize(
-                        self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+                        t_new[:, i] = epochs
+                        day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+
+                        if self.normalization == 'minmax1r':
+                            x_new[:, self.columns_map[col_num]] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                            x_new[:, self.columns_map[col_num]+1] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                            x_new[:, self.columns_map[col_num]+2] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
+                            x_new[:, self.columns_map[col_num]+3] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+
+                        elif self.normalization == 'minmax2r':  # zscore normalization is not taken care of
+                            x_new[:, self.columns_map[col_num]] = np.sin(2 * np.pi * sec_ofday)
+                            x_new[:, self.columns_map[col_num]+1] = np.cos(2 * np.pi * sec_ofday)
+                            x_new[:, self.columns_map[col_num]+2] = np.sin(2 * np.pi * day_ofweek)
+                            x_new[:, self.columns_map[col_num]+3] = np.cos(2 * np.pi * day_ofweek)
+
+                        elif self.normalization == 'zscore':
+                            raise ValueError("Zscore normalization is not compatible with time features")
+
+                        else:
+                            raise ValueError("Values range not chosen for time features")
+
+                        # df = pd.DataFrame()  # import pandas as pd
+                        # df['sine'] = np.sin(2 * np.pi * sec_ofday)
+                        # df['cosine'] = np.cos(2 * np.pi * sec_ofday)
+                        # df.plot.scatter('sine', 'cosine').set_aspect('equal')
+                        # plt.show()  # import matplotlib.pyplot as plt
+
+                    # ips
+                    for i, col_num in enumerate(self.col['ips']):
+                        ip_new[:, i] = np.vectorize(
+                            self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+
+                    # labels
+                    for i, mapping in enumerate(self.y_map[:2]):  # class 2 & 3
+                        y_new[:] = np.vectorize(mapping.__getitem__)(misc[:, 0])
+                        array_ys[i].append(y_new)
+
+                    for mapping in self.y_map[2:3]:  # class 5
+                        y_new[:] = np.vectorize(mapping.__getitem__)(misc[:, 1])
+                        array_ys[2].append(y_new)
+
+                    for mapping in self.y_map[3:4]:  # class 9
+                        y_new[:] = np.vectorize(mapping.__getitem__)(np.core.defchararray.add(
+                            misc[:, 0].astype(str), misc[:, 1].astype(str)))
+                        array_ys[3].append(y_new)
 
                 # norm
                 for col_num in self.col['norm']:
@@ -482,28 +600,34 @@ class PreProcessing:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
                         x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
 
-                # others
+                # other features
                 for i in self.unprocessed_i:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
-                array_x.append(x_new)
-                array_t.append(t_new)
-                array_ip.append(ip_new)
+                if self.meta_migrate:
+                    if self.io['csv_output']:
+                        seq = [trainset['reader'].sequence_n * i + (s-1) for i, s in enumerate(misc[2])]
+                        np.savetxt(x_csv, x_new[seq], delimiter=",")
 
-                for i, mapping in enumerate(self.y_map[:2]):  # class 2 & 3
-                    y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 0])
-                    array_ys[i].append(y_new)
+                    array_x.append(x_new.reshape(int(cur_shape/trainset['reader'].sequence_n),
+                                                 trainset['reader'].sequence_n, self.features_n))
+                else:
+                    array_x.append(x_new)
 
-                for mapping in self.y_map[2:3]:  # class 5
-                    y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 1])
-                    array_ys[2].append(y_new)
+                if self.col['ips'] or self.meta_migrate:
+                    array_ip.append(ip_new)
 
-                for mapping in self.y_map[3:4]:  # class 9
-                    y_new[:] = np.vectorize(mapping.__getitem__)(np.core.defchararray.add(
-                        y[:, 0].astype(str), y[:, 1].astype(str)))
-                    array_ys[3].append(y_new)
+                if self.col['t'] or self.meta_migrate:
+                    array_t.append(t_new)
 
+            if self.io['csv_output']:
+                x_csv.close()
+                for y_csv in ys_csv:
+                    y_csv.close()
             train_fo.close()
+
+            print("[PreProcessing] [operation] time elapsed:",
+                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
         return True
 
@@ -512,17 +636,23 @@ class PreProcessing:
         pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
 
         for testset in self.testsets:
+            t = time.time()
+
             print("[PreProcessing] [operation] Processing testset >", testset['name'])
-            test_fo = tb.open_file(self.io['output_dir'] + "/" + testset['name'] + ".hd5", mode='w')
+
+            output_name = self.io['output_dir'] + "/" + testset['name']
+            test_fo = tb.open_file(output_name + ".hd5", mode='w')
 
             array_x = test_fo.create_earray(test_fo.root, "x", tb.Float64Atom(),
-                                            (0, self.features_n), "Feature Data")
+                                            (0, self.trainsets[0]['reader'].sequence_n, self.features_n)
+                                            if self.meta_migrate else (0, self.features_n), "Feature Data")
 
             array_t = test_fo.create_earray(test_fo.root, "t", tb.Float64Atom(shape=()),
-                                            (0, len(self.col['t'])), "Time")
+                                            (0,) if self.meta_migrate else (0, len(self.col['t'])), "Time")
 
             array_ip = test_fo.create_earray(test_fo.root, "ip", tb.Int64Atom(shape=()),
-                                             (0, len(self.col['ips'])), "IP Addresses")
+                                             (0, 2) if self.meta_migrate else (0, len(self.col['ips'])),
+                                             "IP Addresses") if self.col['ips'] or self.meta_migrate else None
 
             array_ys = []
             lbl_group = test_fo.create_group(test_fo.root, "y")
@@ -530,44 +660,108 @@ class PreProcessing:
                 array_ys.append(test_fo.create_earray(lbl_group, "y"+str(n), tb.Int32Atom(),
                                                       (0,), "Label type "+str(n)))
 
+            labels_n = len(self.testsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
+            for n in range(labels_n):
+                array_ys.append(test_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
+                                                      (0,), "Label type " + str(n)))
+
+            # HD5/CSV Input
+            if self.meta_migrate:
+                array_seq = test_fo.create_earray(test_fo.root, "seq", tb.Int32Atom(),
+                                                  (0,), "Dataset Sequence Length")
+            else:
+                array_seq = None
+
+            # CSV/HD5 Output
+            if not self.io['csv_output']:
+                x_csv = None
+                ys_csv = None
+            else:
+                # CSV: add header and remove existing file (due to append mode writing on previous file if they exist)
+                with open(output_name + "_x.csv", 'wb') as x_csvheader:
+                    np.savetxt(x_csvheader, [range(self.features_n)], delimiter=",", fmt='%i')
+
+                for n in range(labels_n):
+                    try:
+                        os.remove(output_name + "_y" + str(n) + ".csv")
+                    except OSError:
+                        pass
+
+                x_csv = open(output_name + "_x.csv", 'ab')
+                ys_csv = [open(output_name + "_y" + str(n) + ".csv", 'ab')
+                          for n in range(labels_n)]
+
             next_chunk = True
             while next_chunk:
-                x, y, next_chunk = testset['reader'].next()
+                x, misc, next_chunk = testset['reader'].next()
                 cur_shape = self.io['read_chunk_size'] if next_chunk else x.shape[0]
                 x_new = np.zeros((cur_shape, self.features_n))
-                t_new = np.zeros((cur_shape, len(self.col['t'])))
-                ip_new = np.zeros((cur_shape, len(self.col['ips'])))
-                y_new = np.zeros(cur_shape)
 
-                # t
-                for i, col_num in enumerate(self.col['t']):
-                    epochs = self.get_epoch(x, col_num)
+                if self.meta_migrate:
+                    t_new = misc[0]
+                    ip_new = misc[1]
+                    array_seq.append(misc[2])
 
-                    t_new[:, i] = epochs
-                    day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+                    for n, y_w in enumerate(array_ys):
+                        y_w.append(misc[3 + n])
 
-                    if self.normalization == 'minmax1r':
-                        x_new[:, self.columns_map[col_num] + 1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num] + 2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
-                        x_new[:, self.columns_map[col_num] + 3] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
-                        x_new[:, self.columns_map[col_num] + 4] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+                        if self.io['csv_output']:
+                            np.savetxt(ys_csv[n], misc[3 + n][np.newaxis].T, fmt='%i')
 
-                    else:  # zscore normalization is not taken care of
-                        x_new[:, self.columns_map[col_num] + 1] = np.sin(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num] + 2] = np.cos(2 * np.pi * sec_ofday)
-                        x_new[:, self.columns_map[col_num] + 3] = np.sin(2 * np.pi * day_ofweek)
-                        x_new[:, self.columns_map[col_num] + 4] = np.cos(2 * np.pi * day_ofweek)
+                else:
+                    t_new = np.zeros((cur_shape, len(self.col['t'])))
+                    ip_new = np.zeros((cur_shape, len(self.col['ips'])))
+                    y_new = np.zeros(cur_shape)
 
-                # ips
-                for i, col_num in enumerate(self.col['ips']):
-                    ip_new[:, i] = np.vectorize(
-                        self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+                    # t
+                    for i, col_num in enumerate(self.col['t']):
+                        epochs = self.get_epoch(x, col_num)
 
-                # # ips (when unknown IPs present, convert to -1)
-                # for col_num in self.col['ips']:
-                #     unq_i = np.vectorize(self.x_map[self.col['ips'][0]].get, otypes=[np.object])(x[:, col_num])
-                #     unq_i[unq_i == None] = -1
-                #     x_new[:, self.columns_map[col_num]] = unq_i.astype(np.int)
+                        t_new[:, i] = epochs
+                        day_ofweek, sec_ofday = np.vectorize(self._get_normalized_time)(epochs)  # sun, 0 - sat, 6
+
+                        if self.normalization == 'minmax1r':
+                            x_new[:, self.columns_map[col_num] + 1] = (np.sin(2 * np.pi * sec_ofday) + 1) / 2
+                            x_new[:, self.columns_map[col_num] + 2] = (np.cos(2 * np.pi * sec_ofday) + 1) / 2
+                            x_new[:, self.columns_map[col_num] + 3] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
+                            x_new[:, self.columns_map[col_num] + 4] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
+
+                        elif self.normalization == 'minmax2r':  # zscore normalization is not taken care of
+                            x_new[:, self.columns_map[col_num] + 1] = np.sin(2 * np.pi * sec_ofday)
+                            x_new[:, self.columns_map[col_num] + 2] = np.cos(2 * np.pi * sec_ofday)
+                            x_new[:, self.columns_map[col_num] + 3] = np.sin(2 * np.pi * day_ofweek)
+                            x_new[:, self.columns_map[col_num] + 4] = np.cos(2 * np.pi * day_ofweek)
+
+                        elif self.normalization == 'zscore':
+                            raise ValueError("Zscore normalization is not compatible with time features")
+
+                        else:
+                            raise ValueError("Values range not chosen for time features")
+
+                    # ips
+                    for i, col_num in enumerate(self.col['ips']):
+                        ip_new[:, i] = np.vectorize(
+                            self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+
+                    # labels
+                    for i, mapping in enumerate(self.y_map[:2]):  # 0: 2-class, 1: 3-class
+                        y_new[:] = np.vectorize(mapping.__getitem__)(misc[:, 0])
+                        array_ys[i].append(y_new)
+
+                    for mapping in self.y_map[2:3]:  # 2: 5-class
+                        y_new[:] = np.vectorize(mapping.__getitem__)(misc[:, 1])
+                        array_ys[2].append(y_new)
+
+                    for mapping in self.y_map[3:4]:  # 3: 9-class
+                        y_new[:] = np.vectorize(mapping.__getitem__)(np.core.defchararray.add(
+                            misc[:, 0].astype(str), misc[:, 1].astype(str)))
+                        array_ys[3].append(y_new)
+
+                    # # ips (when unknown IPs present, convert to -1)
+                    # for col_num in self.col['ips']:
+                    #     unq_i = np.vectorize(self.x_map[self.col['ips'][0]].get, otypes=[np.object])(x[:, col_num])
+                    #     unq_i[unq_i == None] = -1
+                    #     x_new[:, self.columns_map[col_num]] = unq_i.astype(np.int)
 
                 # norm
                 for col_num in self.col['norm']:
@@ -603,28 +797,35 @@ class PreProcessing:
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
                         x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
 
-                # others
+                # other features
                 for i in self.unprocessed_i:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
-                array_x.append(x_new)
-                array_t.append(t_new)
-                array_ip.append(ip_new)
+                if self.meta_migrate:
+                    if self.io['csv_output']:
+                        seq = [testset['reader'].sequence_n * i + (s-1) for i, s in enumerate(misc[2])]
+                        np.savetxt(x_csv, x_new[seq], delimiter=",")
 
-                for i, mapping in enumerate(self.y_map[:2]):  # 0: 2-class, 1: 3-class
-                    y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 0])
-                    array_ys[i].append(y_new)
+                    array_x.append(x_new.reshape(int(cur_shape/testset['reader'].sequence_n),
+                                                 testset['reader'].sequence_n, self.features_n))
+                else:
+                    array_x.append(x_new)
 
-                for mapping in self.y_map[2:3]:  # 2: 5-class
-                    y_new[:] = np.vectorize(mapping.__getitem__)(y[:, 1])
-                    array_ys[2].append(y_new)
+                if self.col['ips'] or self.meta_migrate:
+                    array_ip.append(ip_new)
 
-                for mapping in self.y_map[3:4]:  # 3: 9-class
-                    y_new[:] = np.vectorize(mapping.__getitem__)(np.core.defchararray.add(
-                        y[:, 0].astype(str), y[:, 1].astype(str)))
-                    array_ys[3].append(y_new)
+                if self.col['t'] or self.meta_migrate:
+                    array_t.append(t_new)
+
+            if self.io['csv_output']:
+                x_csv.close()
+                for y_csv in ys_csv:
+                    y_csv.close()
 
             test_fo.close()
+
+            print("[PreProcessing] [operation] time elapsed:",
+                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
         return True
 
@@ -642,27 +843,3 @@ class PreProcessing:
 
     def _none(*arg):
         pass
-
-    '''
-pp_config = {
-    'io': {
-        'read_chunk_size': 1000000,
-        'train_sets': {
-            'dir': 'E:/data/CIDDS-001/OpenStack',
-            'labels': -4,
-        },
-        'test_sets': None,
-        'output_dir': 'processed'
-    },
-    'normalization': 'minmax2r',  # zscore, minmax1r
-    'pp': {
-        't': 0,
-        'ips': [3, 5],
-        'pts': [4, 6],
-        '1hot': [2],
-        'flg': 10,  # .A.... -> 010000 (6)
-        '8bit': [11],  # 4 -> 00000100 (8)
-        'norm': [1, 7, 8, 9]
-    }
-}
-    '''
