@@ -19,7 +19,7 @@ def define_scope(func):
 
 class LSTModel(object):
     def __init__(self, placeholders,
-                 hyperparams, features_len, labels_len, m1_labels, seed_value, is_training):
+                 hyperparams, features_len, labels_len, seed_value, is_training):
 
         # placeholders
         self.features_placeholder = placeholders['features']
@@ -29,7 +29,6 @@ class LSTModel(object):
 
         self.features_len = features_len
         self.labels_len = labels_len
-        self.m1_labels = m1_labels
         self.seed_value = seed_value
         self.is_training = is_training
 
@@ -76,10 +75,10 @@ class LSTModel(object):
 
         '''
         RETURN:
-            i. output = outputs/activations for all time sequences (output[lastseq] identical to states[lastlayer].h)
+            i. output = outputs/activations for all time sequences
             ii. states = tuples of hidden state and final output
                 states[layer1].c = hidden state for layer1
-                states[layer1].h = final output/activation for layer1 (even with dynamic lengths)
+                states[layer1].h = final output/activation (even with dynamic lengths)
         '''
         # LSTM layer,  shape: [batch_n, sequence_max_n, units_n], (c=[batch_n, units_n], h=[batch_n, units_n])
         output, states = tf.nn.dynamic_rnn(
@@ -95,7 +94,7 @@ class LSTModel(object):
 
         # Dense layer,  shape: [batch_n, labels_len]
         logits = tf.layers.dense(
-            states[-1].h if self.m1_labels else output,
+            output,
             # tf.layers.batch_normalization(output[:, -1, :]),  # batch normalization?
             self.labels_len,
             activation=None,
@@ -108,39 +107,27 @@ class LSTModel(object):
         )
         # logits = tf.reshape(logits, [self.batch_n, self.sequence_max_n, self.labels_len])  # resize back to 3D
 
-        return output, logits
+        return logits
 
     @define_scope
     def optimize(self):
 
-        # class_weights = tf.constant([[1.0, 2.0, 2.0, 2.0, 2.0]])
-        # one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
-        # # deduce weights for batch samples based on their true label
-        # weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
-        # # compute your (unweighted) softmax cross entropy loss
-        # unweighted_losses = tf.nn.softmax_cross_entropy_with_logits(
-        #     labels=one_hot_labels,
-        #     logits=self.prediction
-        # )
-        # # apply the weights, relying on broadcasting of the multiplication
-        # weighted_losses = unweighted_losses * weights
-        # # reduce the result to get your final loss
-        # loss = tf.reduce_mean(weighted_losses)
-
-        _, logits = self.prediction
-
         # compute Loss,  shape: [batch_n]
         # m:n - seq2seq.sequence_loss, with sequence mask and averaging over batches
-        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=self.label_placeholder,
-            logits=logits,
-            name="softmax_crossentropy"
-        ) if self.m1_labels else tf.contrib.seq2seq.sequence_loss(
-            logits,
+        # cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        #     labels=self.label_placeholder,
+        #     logits=self.prediction,
+        #     name="softmax_crossentropy"
+        # )
+
+        seq_mask = tf.sequence_mask(self.seq_placeholder, maxlen=self.sequence_max_n,
+                                    dtype=tf.float32)  # for masking variable sequences
+
+        cross_entropy = tf.contrib.seq2seq.sequence_loss(
+            self.prediction,
             self.label_placeholder,
-            tf.sequence_mask(
-                self.seq_placeholder, maxlen=self.sequence_max_n, dtype=tf.float32
-            ),  # for masking variable sequences
+            # tf.ones([self.batch_n,self.sequence_max_n], dtype=tf.float32),
+            seq_mask,
             average_across_timesteps=False,
             average_across_batch=True)
 
@@ -152,7 +139,7 @@ class LSTModel(object):
         #     decay_rate=self.decay_r, name="lr_decay"
         # )
 
-        # calculate & clip Gradientsad
+        # calculate & clip Gradients
         trainables = tf.trainable_variables()  # returns all variables with trainable=True
         gradients = tf.gradients(loss, trainables, name="gradients")
         clipped_gradients, _ = tf.clip_by_global_norm(
@@ -173,19 +160,16 @@ class LSTModel(object):
     @define_scope
     def error(self):
 
-        _, logits = self.prediction
-
+        # pred = tf.argmax(tf.nn.softmax(self.prediction), axis=1, output_type=tf.int32)  # shape: [batch_n]
         pred = tf.argmax(
             tf.nn.softmax(
-                logits if self.m1_labels else tf.reshape(
-                    logits, [-1, self.labels_len])[:tf.reduce_sum(self.seq_placeholder)]
+                tf.reshape(self.prediction, [-1, self.labels_len])[:tf.reduce_sum(self.seq_placeholder)]
             ),
             axis=1,
             output_type=tf.int32
-        )  # shape: [batch_n]
-
-        truth = self.label_placeholder if self.m1_labels else tf.reshape(
-            self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
+        )
+        # pred_positive = tf.equal(pred, self.label_placeholder)
+        truth = tf.reshape(self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
         pred_positive = tf.equal(pred, truth)
 
         return truth, pred, tf.reduce_mean(

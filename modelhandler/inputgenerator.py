@@ -3,10 +3,10 @@ import tables as tb
 
 class Generator:
     # https://stackoverflow.com/questions/48309631/tensorflow-tf-data-dataset-reading-large-hdf5-files
-    def __init__(self, filepath, class_type, is_seq):
+    def __init__(self, filepath, class_type, is_m1):
         self.file_path = filepath
         self.class_type = '/y/y' + str(class_type)
-        self.is_seq = is_seq
+        self.is_m1 = is_m1
         self.dataset_n = None
 
     def __call__(self):
@@ -17,15 +17,15 @@ class Generator:
         y_r = h5_r.get_node(self.class_type)
         seq_r = h5_r.get_node('/seq')
 
-        if self.is_seq:
-            assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+        assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+
+        if self.is_m1:
+            for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
+                yield (data, label[sequence-1], sequence)
+        else:
             for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
                 yield (data, label, sequence)
 
-        else:
-            assert x_r.shape[0] == y_r.shape[0]
-            for data, label in zip(x_r.iterrows(), y_r.iterrows()):
-                yield (data, label)
 
         h5_r.close()
 

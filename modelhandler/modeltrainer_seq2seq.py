@@ -1,4 +1,4 @@
-from modelhandler.lstmodel import *
+from modelhandler.lstmodel_seq2seq import *
 from modelhandler.inputgenerator import Generator
 
 from sklearn.metrics import confusion_matrix
@@ -14,25 +14,22 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 class ModelTrainer(object):
     def __init__(self, configs, dataset_meta, checkpoint_dir=None, saver_dir=None):
-        tf.reset_default_graph()
-
         self.seed_value = 147
 
         self.hyperparams = configs['hyperparameters']
         self.class_type = configs['class_type']
-        self.m1_labels = configs['m1_labels']
+        self.seq_const = configs['seq_constant']
         self.batch_n_test = configs['batch_n_test']
 
         self.checkpoint_dir = checkpoint_dir + "/" if checkpoint_dir is not None else None
-        self.saver_dir = saver_dir + "/" if saver_dir is not None else ""
-        self.model_name = "s" + str(self.hyperparams['sequence_max_n']) + \
+        self.saver_dir = saver_dir + "/" if saver_dir is not None else None
+        self.model_name = "_s" + str(self.hyperparams['sequence_max_n']) + \
                           "b" + str(self.hyperparams['batch_n']) + \
                           "u" + str(self.hyperparams['units_n']) + \
                           "l" + str(self.hyperparams['layers_n']) + \
-                          "d" + str(int(self.hyperparams['dropout_r']*100)) + \
+                          "d" + str(int(self.hyperparams['dropout_r'] * 100)) + \
                           "y" + str(self.class_type)
 
-        print("[MT Config.]", "M:1" if self.m1_labels else "M:N", "labeling strategy")
         print("[MT Config.] Sequence:", self.hyperparams['sequence_max_n'])
         print("[MT Config.] Batch size:", self.hyperparams['batch_n'])
         print("[MT Config.] Epochs:", self.hyperparams['epochs_n'])
@@ -75,7 +72,7 @@ class ModelTrainer(object):
                     datasets.append({
                         'name': child.stem,
                         'path': str(child),
-                        'gen': Generator(str(child), self.class_type, True)
+                        'gen': Generator(str(child), self.class_type, False if self.seq_const else True)
                     })
                     file_count += 1
 
@@ -84,7 +81,7 @@ class ModelTrainer(object):
             datasets.append({
                 'name': data_path.stem,
                 'path': data_dir,
-                'gen': Generator(data_dir, self.class_type, True)
+                'gen': Generator(data_dir, self.class_type, False if self.seq_const else True)
             })
 
         print("[ModelTrainer]", file_count, "dataset(s) found in >", data_dir)
@@ -94,10 +91,13 @@ class ModelTrainer(object):
 
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=(tf.float32, tf.int32, tf.int32),
+            output_types=(tf.float32, tf.int32) if self.seq_const else (tf.float32, tf.int32, tf.int32),
             output_shapes=(
                 tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]),
-                tf.TensorShape([] if self.m1_labels else [self.hyperparams['sequence_max_n']]),
+                tf.TensorShape([self.hyperparams['sequence_max_n']])
+            ) if self.seq_const else (
+                tf.TensorShape([self.hyperparams['sequence_max_n'], self.features_len]),
+                tf.TensorShape([self.hyperparams['sequence_max_n']]),
                 tf.TensorShape([])
             )
         )
@@ -152,60 +152,54 @@ class ModelTrainer(object):
         for devset in devsets:
             print("[ModelTrainer] Dev Set instances:", devset['gen'].get_instances())
 
-        self.model_train = LSTModel({
-            'features': tf.placeholder(tf.float32, name="features",
-                                       shape=[self.hyperparams['batch_n'], self.hyperparams['sequence_max_n'],
-                                              self.features_len]
-                                       ),
-            'labels': tf.placeholder(tf.int32, name="labels",
-                                     shape=self.hyperparams['batch_n'] if self.m1_labels else [
-                                         self.hyperparams['batch_n'], self.hyperparams['sequence_max_n']]
-                                     ),
-            'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.hyperparams['batch_n'])
-            # 'states': tf.placeholder(
-            #     tf.float32,
-            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
-            # ),  # passing state to next batch
-        }, self.hyperparams, self.features_len, len(self.y_dict), self.m1_labels, self.seed_value, True)
+        if self.seq_const:
+            self.model_train = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.hyperparams['batch_n'],
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=[self.hyperparams['batch_n'],
+                                                                         self.hyperparams['sequence_max_n']])
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True)
 
-        self.model_dev = LSTModel({
-            'features': tf.placeholder(tf.float32, name="features",
-                                       shape=[self.batch_n_test, self.hyperparams['sequence_max_n'],
-                                              self.features_len]
-                                       ),
-            'labels': tf.placeholder(tf.int32, name="labels",
-                                     shape=self.batch_n_test if self.m1_labels else [
-                                         self.batch_n_test, self.hyperparams['sequence_max_n']]
-                                     ),
-            'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.batch_n_test)
-            # 'states': tf.placeholder(
-            #     tf.float32,
-            #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
-            # ),  # passing state to next batch
-        }, self.hyperparams, self.features_len, len(self.y_dict), self.m1_labels, self.seed_value, False)
+            self.model_dev = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.batch_n_test,
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=[self.batch_n_test,
+                                                                         self.hyperparams['sequence_max_n']])
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False)
+
+        else:
+            self.model_train = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.hyperparams['batch_n'],
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=[self.hyperparams['batch_n'],
+                                                                         self.hyperparams['sequence_max_n']]),
+                'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.hyperparams['batch_n'])
+                # 'states': tf.placeholder(
+                #     tf.float32,
+                #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+                # ),  # passing state to next batch
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, True)
+
+            self.model_dev = LSTModel({
+                'features': tf.placeholder(tf.float32, name="features", shape=[self.batch_n_test,
+                                                                               self.hyperparams['sequence_max_n'],
+                                                                               self.features_len]),
+                'labels': tf.placeholder(tf.int32, name="labels", shape=[self.batch_n_test,
+                                                                         self.hyperparams['sequence_max_n']]),
+                'sequences': tf.placeholder(tf.int32, name="sequences", shape=self.batch_n_test)
+                # 'states': tf.placeholder(
+                #     tf.float32,
+                #     shape=[self.hyperparams['layers_n'], 2, self.hyperparams['batch_n'], self.hyperparams['units_n']]
+                # ),  # passing state to next batch
+            }, self.hyperparams, self.features_len, len(self.y_dict), self.seed_value, False)
 
         saver = tf.train.Saver()
 
         with tf.Session() as sess:
             # summary_writer = tf.summary.FileWriter('./logs', graph_def=sess.graph_def)  # tensorboard
-
-            # h5_r = tb.open_file(trainset['path'], mode='r')
-            # features = h5_r.get_node("/x")
-            # labels = h5_r.get_node("/y/y" + str(self.class_type))
-            # seqs = h5_r.get_node("/seq")
-            # assert features.shape[0] == labels.shape[0] == seqs.shape[0]
-            #
-            # with tf.device('/cpu:0'):
-            #     iterator = self._dataset_prep().make_initializable_iterator()
-            #     next_element = iterator.get_next()
-            #
-            #     sess.run(iterator.initializer, feed_dict={  # (re)initialize iterator's state
-            #         m.features_placeholder: features,
-            #         m.labels_placeholder: labels,
-            #         m.seqs_placeholder: seqs
-            #     })
-
-            # h5_r.close()
 
             epoch_current = 0
 
@@ -235,7 +229,6 @@ class ModelTrainer(object):
                     try:
                         while True:
                             features_batched, label_batched, seq_batched = sess.run(next_element)
-                            # features_batched, label_batched = sess.run(next_element)
 
                             (_, loss), (_, _, acc) = sess.run(  # error prior backpropagation
                                 [self.model_train.optimize, self.model_train.error],
@@ -246,16 +239,6 @@ class ModelTrainer(object):
                                     # self.model.state_placeholder: state_current
                                 }
                             )
-
-                            # summary_writer.add_summary(summary_str, step_train)  # tensorboard
-
-                            # # retrieve trainable variables
-                            # trainable_vars_dict = {}
-                            # for k in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
-                            #     trainable_vars_dict[k.name] = sess.run(k)
-                            # lstm_weight_vals = trainable_vars_dict[
-                            #     "prediction/rnn/multi_rnn_cell/cell_0/lstm_cell/kernel:0"]
-                            # w_i, w_C, w_f, w_o = np.split(lstm_weight_vals, 4, axis=1)
 
                             loss_train += loss
                             acc_train += acc
@@ -280,10 +263,6 @@ class ModelTrainer(object):
 
                     print("[ModelTrainer] acc: %.6f, time elapsed:" % acc,
                           time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+                    for row in cm:
+                        print(" ".join(str(col) for col in row))
 
-                    with open("E:/logs/UNSW.txt", "a") as log_file:
-                        log_file.write(self.model_name + ", " + str(epoch_n + 1) + ": \n\n")
-
-                        for row in cm:
-                            print(" ".join(str(col) for col in row))
-                            log_file.write(" ".join(str(col) for col in row) + "\r\n")

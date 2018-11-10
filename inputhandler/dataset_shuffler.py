@@ -41,13 +41,20 @@ class DatasetShuffler:
             self.y_len = 2
             print("[hd5huffler] Labels chosen:", self.y_dict)
 
+        if len(self.y[0]) > 1:
+            self.seq = input_r.get_node('/seq').read()
+            self.y = self.y[range(self.y.shape[0]), self.seq-1]
+            print("[hd5huffler] M:N labeling used, shuffling based on label in the last sequence")
+        else:
+            self.seq = None
+
         self.x_dummy = np.zeros(input_r.get_node('/x').shape[0])
         print("[hd5huffler] Total dataset size:", self.x_dummy.shape[0])
 
+        input_r.close()
         meta_r.close()
 
-    @staticmethod
-    def _get_writers(h5_w, x_r, seq_r, t_r, ip_r, ys_r):
+    def _get_writers(self, h5_w, x_r, seq_r, t_r, ip_r, ys_r):
         x_shape = x_r[0].shape
 
         x_w = h5_w.create_earray(h5_w.root, "x", tb.Float64Atom(), (0, x_shape[0], x_shape[1]), x_r._g_gettitle())
@@ -57,7 +64,7 @@ class DatasetShuffler:
         seq_w = h5_w.create_earray(h5_w.root, "seq", tb.Int32Atom(), (0,), seq_r._g_gettitle())
 
         y_group = h5_w.create_group(h5_w.root, "y")
-        ys_w = [h5_w.create_earray(y_group, "y" + str(n), tb.Int32Atom(), (0,),
+        ys_w = [h5_w.create_earray(y_group, "y" + str(n), tb.Int32Atom(), (0,) if self.seq is None else (0, x_shape[0]),
                                    y._g_gettitle()) for n, y in enumerate(ys_r)]
 
         return x_w, t_w, ip_w, seq_w, ys_w
@@ -77,8 +84,11 @@ class DatasetShuffler:
         seq_read = seq_r.read()
         ys_read = [y_r.read() for y_r in ys_r]
 
-        time_elapsed = time.time()
+        pathlib.Path(self.io['output_dir']).mkdir(parents=True, exist_ok=True)
+
         for n_split, (train_i, test_i) in enumerate(self.splitter.split(self.x_dummy, self.y)):  # loop [n_splits]
+
+            time_elapsed = time.time()
 
             if n_split == 0:
                 print("Train set", Counter(self.y[train_i]))
@@ -94,23 +104,9 @@ class DatasetShuffler:
                     output_name = self.io['output_dir'] + "/" + self.io['input_name'] + "_test_" + str(n_split)
                     h5_w = tb.open_file(output_name + ".hd5", mode='w')
 
-                # # CSV: add header and remove existing file (due to append mode writing on previous file if they exist)
-                # with open(output_name + "_x.csv", 'wb') as x_csvheader:
-                #     np.savetxt(x_csvheader, [range(x_r[0].shape[1])], delimiter=",", fmt='%i')
-                #
-                # for n in range(self.y_len):
-                #     try:
-                #         os.remove(output_name + "_y" + str(n) + ".csv")
-                #     except OSError:
-                #         pass
-
                 # HD5 Writer
                 x_hd5, t_hd5, ip_hd5, seq_hd5, ys_hd5 = self._get_writers(
                     h5_w, x_r, seq_r, t_r, ip_r, ys_r)
-
-                # # CSV Writer
-                # x_csv = open(output_name + "_x.csv", 'ab')
-                # ys_csv = [open(output_name + "_y" + str(n) + ".csv", 'ab') for n in range(self.y_len)]
 
                 flow_n = 0
                 for i in indexes:
@@ -119,7 +115,6 @@ class DatasetShuffler:
 
                     # x
                     x_hd5.append([x])
-                    # np.savetxt(x_csv, x[[seq-1], :], delimiter=",")  # x[[seq-1], :] -> (1, 10), x[seq-1, :] -> (10,)
 
                     # others
                     t_hd5.append([t_read[i]])
@@ -130,15 +125,22 @@ class DatasetShuffler:
                     for n, y_w in enumerate(ys_hd5):
                         y = [ys_read[n][i]]
                         y_w.append(y)
-                        # np.savetxt(ys_csv[n], y, fmt='%i')
 
                     flow_n += 1
                     print(flow_n, end='\r')
 
                 h5_w.close()
-                # x_csv.close()
-                # for y_csv in ys_csv:
-                #     y_csv.close()
+
+                if self.seq is not None:
+                    counts = {}
+                    for i in indexes:
+                        for each_seq in range(seq_read[i]):
+                            try:
+                                counts[ys_read[-1][i][each_seq]] += 1
+                            except KeyError:
+                                counts[ys_read[-1][i][each_seq]] = 1
+
+                    print("Actual Labels:", ", ".join([str(k) + ": " + str(v) for k, v in counts.items()]))
 
             print("[hd5huffler] dataset", n_split, "created with ", test_size, "test ratio, time elapsed:",
                   time.strftime("%H:%M:%S", time.gmtime(time.time() - time_elapsed)))

@@ -1,5 +1,5 @@
 from preprocesshandler.preprocess import PreProcessing
-from segregationhandler.ipsegt import IpSegregation
+from segregationhandler.timesegt import IpSegregation
 from segregationhandler.winsegt import WindowSegregation
 from inputhandler.dataset_shuffler import DatasetShuffler
 from modelhandler.modeltrainer import ModelTrainer

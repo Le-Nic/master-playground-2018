@@ -52,14 +52,14 @@ class CsvReader:
     def _get_data_reader(self):
         """ get reader object for data """
         self.data_reader = pd.read_csv(self.data_file, sep=self.sep, iterator=True, dtype=self.dtypes,
-                                       error_bad_lines=False, header=self.header, parse_dates=self.parse_dates,
+                                       error_bad_lines=True, header=self.header, parse_dates=self.parse_dates,
                                        chunksize=self.read_chunk_size, skipinitialspace=True,
                                        float_precision='round_trip')
 
     def _get_labels_reader(self):
         """ get reader object for labels """
         self.labels_reader = pd.read_csv(self.labels_file, sep=self.sep, iterator=True, dtype=np.object,
-                                         error_bad_lines=False, header=self.header, chunksize=self.read_chunk_size,
+                                         error_bad_lines=True, header=self.header, chunksize=self.read_chunk_size,
                                          skipinitialspace=True, float_precision='round_trip') \
             if self.labels_file else None
 
@@ -108,28 +108,49 @@ class CsvReader:
 
 # Only for "2D" datasets: winsgt, ipsgt
 class Hd5Reader:
-    def __init__(self, data_file, read_chunk_size=10**6):
+    def __init__(self, data_file, is_2d=False, read_chunk_size=10**6):
 
         self.i = 0
         self.read_chunk_size = read_chunk_size
+        self.is_2d = is_2d
 
-        h5_r = tb.open_file(data_file, mode='r')
-        self.x_r = h5_r.get_node('/x')
-        self.t_r = h5_r.get_node('/t')
-        self.ip_r = h5_r.get_node('/ip')
-        self.seq_r = h5_r.get_node('/seq')
+        self.h5_r = tb.open_file(data_file, mode='r')
+        self.x_r = self.h5_r.get_node('/x')
+        self.t_r = self.h5_r.get_node('/t')
+        self.ip_r = self.h5_r.get_node('/ip')
+        self.seq_r = self.h5_r.get_node('/seq') if is_2d else None
 
         try:
-            self.ys_r = [h5_r.get_node("/y", "y" + str(n)) for n in range(4)]
+            self.ys_r = [self.h5_r.get_node("/y", "y" + str(n)) for n in range(4)]
         except tb.exceptions.NoSuchNodeError:
-            self.ys_r = [h5_r.get_node("/y", "y" + str(n)) for n in range(2)]
+            self.ys_r = [self.h5_r.get_node("/y", "y" + str(n)) for n in range(2)]
+
+        self._get_data = self._get_2d_data if is_2d else self._get_1d_data
 
         self._get_data()
 
-        self.features_n = self.data.shape[2]
-        self.sequence_n = self.data.shape[1]
+        self.features_n = self.data.shape[2] if is_2d else self.data.shape[1]
+        self.sequence_n = self.data.shape[1] if is_2d else self.data.shape[0]
 
-    def _get_data(self):
+    def _get_1d_data(self):
+        """ return data chunk from reader """
+        j = self.read_chunk_size + self.i
+
+        self.data = self.x_r[self.i: j]
+        self.misc = (self.t_r[self.i: j],
+                     self.ip_r[self.i: j],) + tuple(
+            y_r[self.i: j] for y_r in self.ys_r)
+
+        if len(self.data):
+            self.i += self.read_chunk_size
+            return True
+
+        else:
+            self.i = 0
+            self._get_data()
+            return False
+
+    def _get_2d_data(self):
         """ return data chunk from reader """
         j = self.read_chunk_size + self.i
 
@@ -152,3 +173,7 @@ class Hd5Reader:
         data = self.data.reshape(-1, self.features_n)
         misc = self.misc
         return data, misc, self._get_data()
+
+    def close(self):
+        self.h5_r.close()
+

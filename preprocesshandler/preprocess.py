@@ -5,7 +5,6 @@ import numpy as np
 import tables as tb
 import math
 import pathlib
-import os
 import time
 
 
@@ -33,7 +32,9 @@ class PreProcessing:
             self.io = configs['io_csv']
             self.trainsets = self._get_files(self.io['train_dir'], True)
             self.testsets = self._get_files(self.io['test_dir'], True)
+
             self.meta_migrate = False
+            self.io['arff_output'] = None
 
         except KeyError:
             self.io = configs['io_hd5']
@@ -44,12 +45,38 @@ class PreProcessing:
                 self.io['read_chunk_size'] = self.io['read_chunk_size'] * self.trainsets[0]['reader'].sequence_n
 
             self.meta_migrate = True
+            if self.io['arff_output'] != 1 and self.io['arff_output'] != 2:
+                self.io['arff_output'] = None
 
-        if not self.meta_migrate and self.io['csv_output']:
-            print("[WARNING] [PreProcessing] CSV output is not supported, using CSV input")
+        if self.io['arff_output'] == 1 or self.io['arff_output'] == 2:
+            if self.io['arff_output'] == 1:
+                print("[PreProcessing] Last instance will be saved as ARFF output")
+            else:
+                print("[PreProcessing] All instances will be saved as ARFF output")
+
+            if not self.meta_migrate:
+                print("[WARNING] [PreProcessing] ARFF output is not supported when using CSV input")
 
         if self.trainsets is None and self.testsets is None:
             raise FileNotFoundError("[Error] [PreProcessing] No input files found")
+
+        # get number of label class for ARFF header
+        if self.meta_migrate and self.io['arff_output']:
+            self.y_arff = []
+            if pathlib.Path(self.io['meta_path']).is_file():
+                meta_fi = tb.open_file(self.io['meta_path'], mode='r')
+                try:
+                    for y_n in range(4):
+                        y_node = meta_fi.get_node("/y" + str(y_n))
+                        self.y_arff.append(y_node.shape[0])
+                        print("[PreProcessing] /y" + str(y_n) + " loaded")
+                except tb.exceptions.NoSuchNodeError:
+                    pass
+                meta_fi.close()
+            else:
+                raise FileNotFoundError("[Error] [PreProcessing] No meta file input")
+        else:
+            self.y_arff = []
 
         # variables initialization
         self.instances = 0  # used for Mean / Std Dev. Calculation
@@ -75,7 +102,7 @@ class PreProcessing:
             del self.unprocessed_i[col_num]
 
         # initialize sets storing uniques
-        for col_num in (self.col['1hot'] +  # 1-hot columns
+        for col_num in (self.col['1hot'] + self.col['int'] +  # 1-hot columns
                         ([self.col['ips'][0]] if self.col['ips'] else [])):  # 1st column for storing IPs
             self.x_unq[col_num] = set()
 
@@ -139,16 +166,19 @@ class PreProcessing:
 
         if data_path.is_dir():
             for child in data_path.iterdir():
-                file_count += 1
 
-                datasets.append({
-                    'name': child.stem,
-                    'reader': input_reader.CsvReader(
-                        str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
-                        parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
-                        delimiter=self.io['delimiter'], header=self.io['header']
-                    ) if is_csv else input_reader.Hd5Reader(str(child), read_chunk_size=self.io['read_chunk_size'])
-                }) if pathlib.Path(child).is_file() else None
+                if pathlib.Path(child).is_file():
+                    file_count += 1
+
+                    datasets.append({
+                        'name': child.stem,
+                        'reader': input_reader.CsvReader(
+                            str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
+                            parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
+                            delimiter=self.io['delimiter'], header=self.io['header']
+                        ) if is_csv else input_reader.Hd5Reader(str(child), is_2d=True,
+                                                                read_chunk_size=self.io['read_chunk_size'])
+                    })
 
         elif data_path.is_file():
             file_count += 1
@@ -159,7 +189,8 @@ class PreProcessing:
                     data_dir, label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
                     parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
                     delimiter=self.io['delimiter'], header=self.io['header']
-                ) if is_csv else input_reader.Hd5Reader(data_dir, read_chunk_size=self.io['read_chunk_size'])
+                ) if is_csv else input_reader.Hd5Reader(data_dir, is_2d=True,
+                                                        read_chunk_size=self.io['read_chunk_size'])
             })
 
         print("[PreProcessing]", file_count, "file(s) found in >", data_dir)
@@ -181,7 +212,7 @@ class PreProcessing:
                 x, y, next_chunk = trainset['reader'].next()
                 instance_num += self.io['read_chunk_size']
 
-                for col_num in (self.col['1hot']):  # 1-hot feature(s)
+                for col_num in (self.col['1hot'] + self.col['int']):  # 1-hot feature(s)
                     self.x_unq[col_num] |= set(x[:, col_num])
 
                 for col_num in self.col['ips']:  # IPs
@@ -280,7 +311,8 @@ class PreProcessing:
             for i, item in enumerate(self.columns_map[col_num + 1:]):
                 self.columns_map[i + col_num + 1] += 3
 
-        for col_num in (self.col['1hot'] + ([self.col['ips'][0]] if len(self.col['ips']) > 0 else [])):
+        for col_num in (self.col['1hot'] + self.col['int'] +
+                        ([self.col['ips'][0]] if len(self.col['ips']) > 0 else [])):
             self.x_map[col_num] = {v: k for k, v in enumerate(self.x_unq[col_num])}
             self.x_len[col_num] = len(self.x_map[col_num])  # unused for IP field
 
@@ -314,7 +346,7 @@ class PreProcessing:
 
         if save_dir is None:
             save_dir = self.io['output_dir']
-        save_path = save_dir + name + ".hd5"
+        save_path = save_dir + "/" + name + ".hd5"
 
         print("[PreProcessing] [metadata] Saving meta info. >", save_path)
 
@@ -341,9 +373,9 @@ class PreProcessing:
             # save columns' name from previous meta
             for k, data in meta_prev.items():
                 if k == "x":
-                    for col_num, col in enumerate(data):
-                        if self.columns_map[col_num] is not None:
-                            x_map[self.columns_map[col_num]] = col
+                    for col_num, col in enumerate(self.columns_map):
+                        if col is not None:
+                            x_map[self.columns_map[col_num]] = data[col_num]
                 else:
                     meta_fo.create_array(meta_fo.root, k, data, meta_prev_desc[k])
 
@@ -355,22 +387,27 @@ class PreProcessing:
                 date_type = [" (day)", " (day)", " (month)", " (month)"]
                 for i, col_num in enumerate(col_nums):
                     for r in range(4):
-                        x_map[self.columns_map[col_num]+r] = col + str(i+1) + cyclic_type[r % 2] + date_type[r]
+                        x_map[self.columns_map[col_num]+r] = col + "_" + str(i) + cyclic_type[r % 2] + date_type[r]
             elif col == '1hot':
                 for i, col_num in enumerate(col_nums):
                     for j, unq in enumerate(self.x_unq[col_num]):
-                        x_map[self.columns_map[col_num]+j] = col + str(i+1) + ": " + str(unq)
+                        x_map[self.columns_map[col_num]+j] = col + "_" + str(i) + ": " + str(unq)
             elif col == 'rm' or col == 'ips':
                 pass
             else:
                 for i, col_num in enumerate(col_nums):
-                    x_map[self.columns_map[col_num]] = col + str(i+1)
+                    x_map[self.columns_map[col_num]] = col + "_" + str(i)
 
         meta_fo.create_array(meta_fo.root, "x", x_map, "Features Header")
 
         # IPs List
         if self.col['ips']:
             meta_fo.create_array(meta_fo.root, "ip", np.array(list(self.x_unq[self.col['ips'][0]])), "Indexed IPs")
+
+        # Numericalized List
+        for i, col_num in enumerate(self.col['int']):
+            meta_fo.create_array(meta_fo.root, "int_" + str(i),
+                                 np.array(list(self.x_unq[col_num])), "Numericalized Objects")
 
         # Labels Mapping
         for i, mapping in enumerate(self.y_map):
@@ -466,7 +503,10 @@ class PreProcessing:
             labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
                 array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
-                                                       (0,), "Label type " + str(n)))
+                                                       (0, self.trainsets[0]['reader'].sequence_n)
+                                                       if self.meta_migrate and len(
+                                                           self.trainsets[0]['reader'].ys_r[0][0]) > 1
+                                                       else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input
             if self.meta_migrate:
@@ -475,24 +515,32 @@ class PreProcessing:
             else:
                 array_seq = None
 
-            # CSV/HD5 Output
-            if not self.io['csv_output']:
-                x_csv = None
-                ys_csv = None
+            # ARFF Output
+            if not self.io['arff_output']:
+                arffs_w = None
             else:
-                # CSV: add header and remove existing file (due to append mode writing on previous file if they exist)
-                with open(output_name + "_x.csv", 'wb') as x_csvheader:
-                    np.savetxt(x_csvheader, [range(self.features_n)], delimiter=",", fmt='%i')
+                # ARFF: add header and remove existing file (due to append mode writing on previous file if they exist)
+                for y_n in range(labels_n):
+                    with open(output_name + "_y" + str(y_n) + ".arff", 'wb') as arff_header:
+                        header_contents = np.array(["@relation " + trainset['name'] + "_y" + str(y_n), ""])
 
-                for n in range(labels_n):
-                    try:
-                        os.remove(output_name + "_y" + str(n) + ".csv")
-                    except OSError:
-                        pass
+                        # attributes' headers
+                        for n in range(self.features_n):
+                            header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
 
-                x_csv = open(output_name + "_x.csv", 'ab')
-                ys_csv = [open(output_name + "_y" + str(n) + ".csv", 'ab')
-                          for n in range(labels_n)]
+                        # label header
+                        header_contents = np.append(
+                            header_contents,
+                            ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+
+                        )
+                        header_contents = np.append(header_contents, ("", "@data"))
+
+                        np.savetxt(arff_header, header_contents[np.newaxis].T, fmt='%s')
+
+                arffs_w = [open(output_name + "_y" + str(n) + ".arff", 'ab') for n in range(labels_n)]
+
+            misc_shape = int(self.io['read_chunk_size'] / trainset['reader'].sequence_n)
 
             next_chunk = True
             while next_chunk:
@@ -500,21 +548,41 @@ class PreProcessing:
                 cur_shape = self.io['read_chunk_size'] if next_chunk else x.shape[0]
                 x_new = np.zeros((cur_shape, self.features_n))
 
+                ''' migrate labels from HD5 datasets and/or processing of labels for ARFF datasets '''
                 if self.meta_migrate:
                     t_new = misc[0]
                     ip_new = misc[1]
                     array_seq.append(misc[2])
 
-                    for n, y_w in enumerate(array_ys):
+                    # initialization as arrays instead of writing to file every loop
+                    if self.io['arff_output'] == 1:
+                        ys_buffer_arff = [None] * labels_n
+                    elif self.io['arff_output'] == 2:
+                        ys_buffer_arff = [np.zeros((sum(misc[2]), 1)) for _ in range(labels_n)]
+                    else:
+                        ys_buffer_arff = None
+
+                    if not next_chunk:
+                        misc_shape = int(cur_shape / trainset['reader'].sequence_n)
+
+                    for n, y_w in enumerate(array_ys):  # loop each class type
                         y_w.append(misc[3 + n])
 
-                        if self.io['csv_output']:
-                            np.savetxt(ys_csv[n], misc[3 + n][np.newaxis].T, fmt='%i')
+                        if self.io['arff_output'] == 1:  # get last label and transform row to column
+                            ys_buffer_arff[n] = misc[3 + n][np.arange(misc_shape), misc[2]-1][np.newaxis].T
+
+                        elif self.io['arff_output'] == 2:
+                            slice_i = 0  # pointer for saving to ys_buffer_arff
+                            for i, seq in enumerate(misc[2]):  # loop each instance
+                                ys_buffer_arff[n][slice_i:slice_i+seq] = misc[3 + n][i][:seq, np.newaxis]
+                                slice_i += seq
 
                 else:
+                    ''' conversion of certain features and labels (time, int, ip, labels) '''
                     t_new = np.zeros((cur_shape, len(self.col['t'])))
                     ip_new = np.zeros((cur_shape, len(self.col['ips'])))
                     y_new = np.zeros(cur_shape)
+                    ys_buffer_arff = []
 
                     # t (gmt)
                     for i, col_num in enumerate(self.col['t']):
@@ -547,6 +615,11 @@ class PreProcessing:
                         # df.plot.scatter('sine', 'cosine').set_aspect('equal')
                         # plt.show()  # import matplotlib.pyplot as plt
 
+                    # int
+                    for i, col_num in enumerate(self.col['int']):
+                        x_new[:, self.columns_map[col_num]] = np.vectorize(
+                            self.x_map[col_num].__getitem__)(x[:, col_num])
+
                     # ips
                     for i, col_num in enumerate(self.col['ips']):
                         ip_new[:, i] = np.vectorize(
@@ -566,6 +639,7 @@ class PreProcessing:
                             misc[:, 0].astype(str), misc[:, 1].astype(str)))
                         array_ys[3].append(y_new)
 
+                ''' actual pre-processing of all features '''
                 # norm
                 for col_num in self.col['norm']:
                     x_new[:, self.columns_map[col_num]] = self.normalize(x[:, col_num], col_num)
@@ -592,10 +666,19 @@ class PreProcessing:
                 # 16 bit binary (ports)
                 for col_num in self.col['16bit']:
                     for i, ele in enumerate(x[:, col_num]):  # detect ICMP type & code in protocol field
-                        if not float(ele).is_integer():  # if ICMP code is 0, it will not be detected
-                            icmp_field = ele.split('.')  # type, code
-                            # order is reverse, ICMP code is shifted 8 bits to the left
-                            x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256  # 8-bit code, 8-bit type
+                        try:
+                            if not float(ele).is_integer():  # if ICMP code is 0, it will not be detected
+                                icmp_field = ele.split('.')  # type, code
+                                # order is reverse, ICMP code is shifted 8 bits to the left
+                                x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256  # 8-bit code, 8-bit type
+                        except ValueError:  # UNSW dataset (certain ICMP flow will result in hexadecimal port no.)
+                            try:
+                                x[i, col_num] = int(ele, 16)
+                            except ValueError:
+                                x[i, col_num] = 0
+
+                            if x[i, col_num] > 65535:
+                                x[i, col_num] = 65535
 
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
                         x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
@@ -604,14 +687,34 @@ class PreProcessing:
                 for i in self.unprocessed_i:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
-                if self.meta_migrate:
-                    if self.io['csv_output']:
-                        seq = [trainset['reader'].sequence_n * i + (s-1) for i, s in enumerate(misc[2])]
-                        np.savetxt(x_csv, x_new[seq], delimiter=",")
+                ''' write/save all features '''
+                if self.meta_migrate:  # Saving 2D features from 2D-HD5
+                    if self.io['arff_output']:
+
+                        for y_n, arff_w in enumerate(arffs_w):
+                            if self.io['arff_output'] == 1:  # many to one labeling
+                                seqs = [trainset['reader'].sequence_n * i + (seq-1) for i, seq in enumerate(misc[2])]
+                                np.savetxt(
+                                    arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
+                                    fmt="%.18e," * self.features_n + "%i")
+
+                            else:  # many to many labeling
+                                x_buffer_arff = np.zeros((sum(misc[2]), self.features_n))
+                                slice_i = 0  # index for x_buffer_arff
+                                slice_j = 0  # index for x_new
+
+                                for i, seq in enumerate(misc[2]):  # loop each instance
+                                    x_buffer_arff[slice_i:slice_i + seq] = x_new[slice_j:slice_j+seq]
+                                    slice_i += seq
+                                    slice_j += trainset['reader'].sequence_n
+
+                                np.savetxt(
+                                    arff_w, np.append(x_buffer_arff, (ys_buffer_arff[y_n]), axis=1),
+                                    fmt="%.18e," * self.features_n + "%i")
 
                     array_x.append(x_new.reshape(int(cur_shape/trainset['reader'].sequence_n),
                                                  trainset['reader'].sequence_n, self.features_n))
-                else:
+                else:  # Saving 1D features from CSV into HD5
                     array_x.append(x_new)
 
                 if self.col['ips'] or self.meta_migrate:
@@ -620,10 +723,9 @@ class PreProcessing:
                 if self.col['t'] or self.meta_migrate:
                     array_t.append(t_new)
 
-            if self.io['csv_output']:
-                x_csv.close()
-                for y_csv in ys_csv:
-                    y_csv.close()
+            if self.io['arff_output']:
+                for arff_w in arffs_w:
+                    arff_w.close()
             train_fo.close()
 
             print("[PreProcessing] [operation] time elapsed:",
@@ -656,14 +758,13 @@ class PreProcessing:
 
             array_ys = []
             lbl_group = test_fo.create_group(test_fo.root, "y")
-            for n in range(self.lbl_type_n):
-                array_ys.append(test_fo.create_earray(lbl_group, "y"+str(n), tb.Int32Atom(),
-                                                      (0,), "Label type "+str(n)))
-
-            labels_n = len(self.testsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
+            labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
                 array_ys.append(test_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
-                                                      (0,), "Label type " + str(n)))
+                                                      (0, self.trainsets[0]['reader'].sequence_n)
+                                                      if self.meta_migrate and len(
+                                                          self.trainsets[0]['reader'].ys_r[0][0]) > 1
+                                                      else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input
             if self.meta_migrate:
@@ -672,24 +773,31 @@ class PreProcessing:
             else:
                 array_seq = None
 
-            # CSV/HD5 Output
-            if not self.io['csv_output']:
-                x_csv = None
-                ys_csv = None
+            # ARFF Output
+            if not self.io['arff_output']:
+                arffs_w = None
             else:
-                # CSV: add header and remove existing file (due to append mode writing on previous file if they exist)
-                with open(output_name + "_x.csv", 'wb') as x_csvheader:
-                    np.savetxt(x_csvheader, [range(self.features_n)], delimiter=",", fmt='%i')
+                # ARFF: add header and remove existing file (due to append mode writing on previous file if they exist)
+                for y_n in range(labels_n):
+                    with open(output_name + "_y" + str(y_n) + ".arff", 'wb') as arff_header:
+                        header_contents = np.array(["@relation " + testset['name'] + "_y" + str(y_n), ""])
 
-                for n in range(labels_n):
-                    try:
-                        os.remove(output_name + "_y" + str(n) + ".csv")
-                    except OSError:
-                        pass
+                        # attributes' headers
+                        for n in range(self.features_n):
+                            header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
 
-                x_csv = open(output_name + "_x.csv", 'ab')
-                ys_csv = [open(output_name + "_y" + str(n) + ".csv", 'ab')
-                          for n in range(labels_n)]
+                        # label header
+                        header_contents = np.append(
+                            header_contents,
+                            ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                        )
+                        header_contents = np.append(header_contents, ("", "@data"))
+
+                        np.savetxt(arff_header, header_contents[np.newaxis].T, fmt='%s')
+
+                arffs_w = [open(output_name + "_y" + str(n) + ".arff", 'ab') for n in range(labels_n)]
+
+            misc_shape = int(self.io['read_chunk_size'] / testset['reader'].sequence_n)
 
             next_chunk = True
             while next_chunk:
@@ -702,16 +810,34 @@ class PreProcessing:
                     ip_new = misc[1]
                     array_seq.append(misc[2])
 
-                    for n, y_w in enumerate(array_ys):
+                    # initialization as arrays instead of writing to file every loop
+                    if self.io['arff_output'] == 1:
+                        ys_buffer_arff = [None] * labels_n
+                    elif self.io['arff_output'] == 2:
+                        ys_buffer_arff = [np.zeros((sum(misc[2]), 1)) for _ in range(labels_n)]
+                    else:
+                        ys_buffer_arff = None
+
+                    if not next_chunk:
+                        misc_shape = int(cur_shape / testset['reader'].sequence_n)
+
+                    for n, y_w in enumerate(array_ys):  # loop each class type
                         y_w.append(misc[3 + n])
 
-                        if self.io['csv_output']:
-                            np.savetxt(ys_csv[n], misc[3 + n][np.newaxis].T, fmt='%i')
+                        if self.io['arff_output'] == 1:
+                            ys_buffer_arff[n] = misc[3 + n][np.arange(misc_shape), misc[2]-1][np.newaxis].T
+
+                        elif self.io['arff_output'] == 2:
+                            slice_i = 0  # pointer for saving to ys_buffer_arff
+                            for i, seq in enumerate(misc[2]):  # loop each instance
+                                ys_buffer_arff[n][slice_i:slice_i + seq] = misc[3 + n][i][:seq, np.newaxis]
+                                slice_i += seq
 
                 else:
                     t_new = np.zeros((cur_shape, len(self.col['t'])))
                     ip_new = np.zeros((cur_shape, len(self.col['ips'])))
                     y_new = np.zeros(cur_shape)
+                    ys_buffer_arff = []
 
                     # t
                     for i, col_num in enumerate(self.col['t']):
@@ -742,6 +868,11 @@ class PreProcessing:
                     for i, col_num in enumerate(self.col['ips']):
                         ip_new[:, i] = np.vectorize(
                             self.x_map[self.col['ips'][0]].__getitem__)(x[:, col_num])
+
+                    # int
+                    for i, col_num in enumerate(self.col['int']):
+                        x_new[:, self.columns_map[col_num]] = np.vectorize(
+                            self.x_map[col_num].__getitem__)(x[:, col_num])
 
                     # labels
                     for i, mapping in enumerate(self.y_map[:2]):  # 0: 2-class, 1: 3-class
@@ -790,9 +921,18 @@ class PreProcessing:
                 # 16 bit binary (ports)
                 for col_num in self.col['16bit']:
                     for i, ele in enumerate(x[:, col_num]):
-                        if not float(ele).is_integer():
-                            icmp_field = ele.split('.')
-                            x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256
+                        try:
+                            if not float(ele).is_integer():
+                                icmp_field = ele.split('.')
+                                x[i, col_num] = int(icmp_field[0]) + int(icmp_field[1]) * 256
+                        except ValueError:
+                            try:
+                                x[i, col_num] = int(ele, 16)
+                            except ValueError:
+                                x[i, col_num] = 0
+
+                            if x[i, col_num] > 65535:
+                                x[i, col_num] = 65535
 
                     x_new[:, self.columns_map[col_num]:self.columns_map[col_num] + 16] = np.unpackbits(
                         x[:, col_num].astype('float32').astype('>i2').view('uint8')).reshape((cur_shape, -1))
@@ -801,14 +941,34 @@ class PreProcessing:
                 for i in self.unprocessed_i:
                     x_new[:, self.columns_map[i]] = x[:, i]
 
-                if self.meta_migrate:
-                    if self.io['csv_output']:
-                        seq = [testset['reader'].sequence_n * i + (s-1) for i, s in enumerate(misc[2])]
-                        np.savetxt(x_csv, x_new[seq], delimiter=",")
+                if self.meta_migrate:  # Saving 2D features from 2D-HD5
+                    if self.io['arff_output']:
+
+                        for y_n, arff_w in enumerate(arffs_w):
+
+                            if self.io['arff_output'] == 1:  # many to one labeling
+                                seqs = [testset['reader'].sequence_n * i + (seq-1) for i, seq in enumerate(misc[2])]
+                                np.savetxt(
+                                    arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
+                                    fmt="%.18e," * self.features_n + "%i")
+
+                            else:  # many to many labeling
+                                x_buffer_arff = np.zeros((sum(misc[2]), self.features_n))
+                                slice_i = 0  # index for x_buffer_arff
+                                slice_j = 0  # index for x_new
+
+                                for i, seq in enumerate(misc[2]):  # loop each instance
+                                    x_buffer_arff[slice_i:slice_i + seq] = x_new[slice_j:slice_j + seq]
+                                    slice_i += seq
+                                    slice_j += testset['reader'].sequence_n
+
+                                np.savetxt(
+                                    arff_w, np.append(x_buffer_arff, (ys_buffer_arff[y_n]), axis=1),
+                                    fmt="%.18e," * self.features_n + "%i")
 
                     array_x.append(x_new.reshape(int(cur_shape/testset['reader'].sequence_n),
                                                  testset['reader'].sequence_n, self.features_n))
-                else:
+                else:  # Saving 1D features from CSV into HD5
                     array_x.append(x_new)
 
                 if self.col['ips'] or self.meta_migrate:
@@ -817,10 +977,9 @@ class PreProcessing:
                 if self.col['t'] or self.meta_migrate:
                     array_t.append(t_new)
 
-            if self.io['csv_output']:
-                x_csv.close()
-                for y_csv in ys_csv:
-                    y_csv.close()
+            if self.io['arff_output']:
+                for arff_w in arffs_w:
+                    arff_w.close()
 
             test_fo.close()
 
@@ -828,6 +987,13 @@ class PreProcessing:
                   time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
         return True
+
+    def close(self):
+        for trainset in self.trainsets:
+            trainset['reader'].close()
+
+        for testset in self.testsets:
+            testset['reader'].close()
 
     def _zscore_norm(self, x, col_num):
         """ Z-Standardization (zero Mean, unit Variance) """
