@@ -116,8 +116,17 @@ class Hd5Reader:
 
         self.h5_r = tb.open_file(data_file, mode='r')
         self.x_r = self.h5_r.get_node('/x')
-        self.t_r = self.h5_r.get_node('/t')
-        self.ip_r = self.h5_r.get_node('/ip')
+
+        try:
+            self.t_r = self.h5_r.get_node('/t')
+            self.ip_r = self.h5_r.get_node('/ip')
+            self._get_data = self._get_2d_data if is_2d else self._get_1d_data
+
+        except tb.exceptions.NoSuchNodeError:
+            self.t_r = None
+            self.ip_r = None
+            self._get_data = self._get_basic_data
+
         self.seq_r = self.h5_r.get_node('/seq') if is_2d else None
 
         try:
@@ -125,12 +134,28 @@ class Hd5Reader:
         except tb.exceptions.NoSuchNodeError:
             self.ys_r = [self.h5_r.get_node("/y", "y" + str(n)) for n in range(2)]
 
-        self._get_data = self._get_2d_data if is_2d else self._get_1d_data
-
         self._get_data()
 
         self.features_n = self.data.shape[2] if is_2d else self.data.shape[1]
         self.sequence_n = self.data.shape[1] if is_2d else self.data.shape[0]
+
+    def _get_basic_data(self):
+        """ return data chunk from reader """
+        j = self.read_chunk_size + self.i
+
+        self.data = self.x_r[self.i: j]
+        self.misc = (None,
+                     None,) + tuple(
+            y_r[self.i: j] for y_r in self.ys_r)
+
+        if len(self.data):
+            self.i += self.read_chunk_size
+            return True
+
+        else:
+            self.i = 0
+            self._get_data()
+            return False
 
     def _get_1d_data(self):
         """ return data chunk from reader """

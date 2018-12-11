@@ -79,6 +79,11 @@ class DatasetShuffler:
         seq_r = h5_r.get_node('/seq')
         ys_r = [h5_r.get_node('/y/y' + str(i)) for i in range(self.y_len)]
 
+        if t_r.shape[0] == 0 or ip_r.shape[0] == 0:
+            extra_contents = False
+        else:
+            extra_contents = True
+
         t_read = t_r.read()
         ip_read = ip_r.read()
         seq_read = seq_r.read()
@@ -117,9 +122,10 @@ class DatasetShuffler:
                     x_hd5.append([x])
 
                     # others
-                    t_hd5.append([t_read[i]])
-                    ip_hd5.append([ip_read[i]])
                     seq_hd5.append([seq])
+                    if extra_contents:
+                        t_hd5.append([t_read[i]])
+                        ip_hd5.append([ip_read[i]])
 
                     # y
                     for n, y_w in enumerate(ys_hd5):

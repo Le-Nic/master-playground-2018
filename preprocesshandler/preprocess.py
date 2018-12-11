@@ -492,7 +492,8 @@ class PreProcessing:
                                              if self.meta_migrate else (0, self.features_n), "Feature Data")
 
             array_t = train_fo.create_earray(train_fo.root, "t", tb.Float64Atom(shape=()),
-                                             (0,) if self.meta_migrate else (0, len(self.col['t'])), "Time")
+                                             (0,) if self.meta_migrate else (0, len(self.col['t'])),
+                                             "Time") if self.col['t'] or self.meta_migrate else None
 
             array_ip = train_fo.create_earray(train_fo.root, "ip", tb.Int64Atom(shape=()),
                                               (0, 2) if self.meta_migrate else (0, len(self.col['ips'])),
@@ -521,26 +522,38 @@ class PreProcessing:
             else:
                 # ARFF: add header and remove existing file (due to append mode writing on previous file if they exist)
                 for y_n in range(labels_n):
-                    with open(output_name + "_y" + str(y_n) + ".arff", 'wb') as arff_header:
+                    with open(output_name + "_y" + str(y_n) + (
+                            "_all.arff" if self.io['temporal_dim'] else "_last.arff"), 'wb') as arff_header:
                         header_contents = np.array(["@relation " + trainset['name'] + "_y" + str(y_n), ""])
 
                         # attributes' headers
-                        for n in range(self.features_n):
-                            header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
+                        if self.io['temporal_dim']:
+                            for seq_n in range(trainset['reader'].sequence_n):
+                                for n in range(self.features_n):
+                                    header_contents = np.append(
+                                        header_contents, ("@attribute 'T" + str(seq_n+1) + " " + str(n) + "' numeric"))
+                            header_contents = np.append(
+                                header_contents,
+                                ("@attribute 'T" + str(trainset['reader'].sequence_n) +
+                                 " y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                            )
 
-                        # label header
-                        header_contents = np.append(
-                            header_contents,
-                            ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                        else:
+                            for n in range(self.features_n):
+                                header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
+                            header_contents = np.append(
+                                header_contents,
+                                ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                            )
 
-                        )
                         header_contents = np.append(header_contents, ("", "@data"))
 
                         np.savetxt(arff_header, header_contents[np.newaxis].T, fmt='%s')
 
-                arffs_w = [open(output_name + "_y" + str(n) + ".arff", 'ab') for n in range(labels_n)]
+                arffs_w = [open(output_name + "_y" + str(n) + (
+                    "_all.arff" if self.io['temporal_dim'] else "_last.arff"), 'ab') for n in range(labels_n)]
 
-            misc_shape = int(self.io['read_chunk_size'] / trainset['reader'].sequence_n)
+            misc_shape = int(self.io['read_chunk_size'] / trainset['reader'].sequence_n) if self.meta_migrate else None
 
             next_chunk = True
             while next_chunk:
@@ -691,23 +704,38 @@ class PreProcessing:
                 if self.meta_migrate:  # Saving 2D features from 2D-HD5
                     if self.io['arff_output']:
 
-                        for y_n, arff_w in enumerate(arffs_w):
-                            if self.io['arff_output'] == 1:  # many to one labeling
-                                seqs = [trainset['reader'].sequence_n * i + (seq-1) for i, seq in enumerate(misc[2])]
-                                np.savetxt(
-                                    arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
-                                    fmt="%.18e," * self.features_n + "%i")
+                        if self.io['arff_output'] == 1:  # many-to-one labeling
 
-                            else:  # many to many labeling
+                            if self.io['temporal_dim']:
+                                for y_n, arff_w in enumerate(arffs_w):
+                                    # noinspection PyTypeChecker
+                                    np.savetxt(
+                                        arff_w, np.append(
+                                            np.reshape(x_new, (int(cur_shape/trainset['reader'].sequence_n), -1)),
+                                            (ys_buffer_arff[y_n]), axis=1),
+                                        fmt="%.18e," * (self.features_n * trainset['reader'].sequence_n) + "%i")
+                            else:
+                                seqs = [trainset['reader'].sequence_n * i + (seq - 1) for i, seq in enumerate(misc[2])]
+                                for y_n, arff_w in enumerate(arffs_w):
+                                    # noinspection PyTypeChecker
+                                    np.savetxt(
+                                        arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
+                                        fmt="%.18e," * self.features_n + "%i")
+
+                        else:  # many-to-many labeling
+                            for y_n, arff_w in enumerate(arffs_w):
                                 x_buffer_arff = np.zeros((sum(misc[2]), self.features_n))
                                 slice_i = 0  # index for x_buffer_arff
                                 slice_j = 0  # index for x_new
+
+                                print(x_buffer_arff.shape)
 
                                 for i, seq in enumerate(misc[2]):  # loop each instance
                                     x_buffer_arff[slice_i:slice_i + seq] = x_new[slice_j:slice_j+seq]
                                     slice_i += seq
                                     slice_j += trainset['reader'].sequence_n
 
+                                # noinspection PyTypeChecker
                                 np.savetxt(
                                     arff_w, np.append(x_buffer_arff, (ys_buffer_arff[y_n]), axis=1),
                                     fmt="%.18e," * self.features_n + "%i")
@@ -779,25 +807,38 @@ class PreProcessing:
             else:
                 # ARFF: add header and remove existing file (due to append mode writing on previous file if they exist)
                 for y_n in range(labels_n):
-                    with open(output_name + "_y" + str(y_n) + ".arff", 'wb') as arff_header:
+                    with open(output_name + "_y" + str(y_n) + (
+                            "_all.arff" if self.io['temporal_dim'] else "_last.arff"), 'wb') as arff_header:
                         header_contents = np.array(["@relation " + testset['name'] + "_y" + str(y_n), ""])
 
                         # attributes' headers
-                        for n in range(self.features_n):
-                            header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
+                        if self.io['temporal_dim']:
+                            for seq_n in range(testset['reader'].sequence_n):
+                                for n in range(self.features_n):
+                                    header_contents = np.append(
+                                        header_contents, ("@attribute 'T" + str(seq_n+1) + " " + str(n) + "' numeric"))
+                            header_contents = np.append(
+                                header_contents,
+                                ("@attribute 'T" + str(testset['reader'].sequence_n) +
+                                 " y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                            )
 
-                        # label header
-                        header_contents = np.append(
-                            header_contents,
-                            ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
-                        )
+                        else:
+                            for n in range(self.features_n):
+                                header_contents = np.append(header_contents, ("@attribute '" + str(n) + "' numeric"))
+                            header_contents = np.append(
+                                header_contents,
+                                ("@attribute 'y' {" + ','.join(str(y) for y in range(self.y_arff[y_n])) + "}")
+                            )
+
                         header_contents = np.append(header_contents, ("", "@data"))
 
                         np.savetxt(arff_header, header_contents[np.newaxis].T, fmt='%s')
 
-                arffs_w = [open(output_name + "_y" + str(n) + ".arff", 'ab') for n in range(labels_n)]
+                arffs_w = [open(output_name + "_y" + str(n) + (
+                    "_all.arff" if self.io['temporal_dim'] else "_last.arff"), 'ab') for n in range(labels_n)]
 
-            misc_shape = int(self.io['read_chunk_size'] / testset['reader'].sequence_n)
+            misc_shape = int(self.io['read_chunk_size'] / testset['reader'].sequence_n) if self.meta_migrate else None
 
             next_chunk = True
             while next_chunk:
@@ -944,15 +985,26 @@ class PreProcessing:
                 if self.meta_migrate:  # Saving 2D features from 2D-HD5
                     if self.io['arff_output']:
 
-                        for y_n, arff_w in enumerate(arffs_w):
+                        if self.io['arff_output'] == 1:  # many-to-one labeling
 
-                            if self.io['arff_output'] == 1:  # many to one labeling
-                                seqs = [testset['reader'].sequence_n * i + (seq-1) for i, seq in enumerate(misc[2])]
-                                np.savetxt(
-                                    arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
-                                    fmt="%.18e," * self.features_n + "%i")
+                            if self.io['temporal_dim']:
+                                for y_n, arff_w in enumerate(arffs_w):
+                                    # noinspection PyTypeChecker
+                                    np.savetxt(
+                                        arff_w, np.append(
+                                            np.reshape(x_new, (int(cur_shape / testset['reader'].sequence_n), -1)),
+                                            (ys_buffer_arff[y_n]), axis=1),
+                                        fmt="%.18e," * (self.features_n * testset['reader'].sequence_n) + "%i")
+                            else:
+                                seqs = [testset['reader'].sequence_n * i + (seq - 1) for i, seq in enumerate(misc[2])]
+                                for y_n, arff_w in enumerate(arffs_w):
+                                    # noinspection PyTypeChecker
+                                    np.savetxt(
+                                        arff_w, np.append(x_new[seqs], (ys_buffer_arff[y_n]), axis=1),
+                                        fmt="%.18e," * self.features_n + "%i")
 
-                            else:  # many to many labeling
+                        else:  # many-to-many labeling
+                            for y_n, arff_w in enumerate(arffs_w):
                                 x_buffer_arff = np.zeros((sum(misc[2]), self.features_n))
                                 slice_i = 0  # index for x_buffer_arff
                                 slice_j = 0  # index for x_new
@@ -962,6 +1014,7 @@ class PreProcessing:
                                     slice_i += seq
                                     slice_j += testset['reader'].sequence_n
 
+                                # noinspection PyTypeChecker
                                 np.savetxt(
                                     arff_w, np.append(x_buffer_arff, (ys_buffer_arff[y_n]), axis=1),
                                     fmt="%.18e," * self.features_n + "%i")

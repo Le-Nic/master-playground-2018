@@ -1,6 +1,8 @@
 import tensorflow as tf
 import functools
 
+from neuralturingmachine.ntm import NTMCell
+
 
 # Hafner, Danijar. Structuring Your TensorFlow Models, 2016.
 def define_scope(func):
@@ -54,36 +56,37 @@ class LSTModel(object):
     @define_scope
     def prediction(self):
 
-        # LSTM Cells
-        cells = [
-            tf.nn.rnn_cell.LSTMCell(
-                num_units=self.units_n, dtype=tf.float32,
-                initializer=tf.contrib.layers.xavier_initializer(
-                    uniform=True, seed=self.seed_value, dtype=tf.float32
-                ), name="lstm_cell"  # , reuse=True
-            ) for _ in range(self.layers_n)
-        ]
-        cells_stacked = tf.nn.rnn_cell.MultiRNNCell(cells)
+        # # LSTM Cells
+        # cells = [
+        #     tf.nn.rnn_cell.LSTMCell(
+        #         num_units=self.units_n, dtype=tf.float32,
+        #         initializer=tf.contrib.layers.xavier_initializer(
+        #             uniform=True, seed=self.seed_value, dtype=tf.float32
+        #         ), name="lstm_cell"  # , reuse=True
+        #     ) for _ in range(self.layers_n)
+        # ]
+        # cells_stacked = tf.nn.rnn_cell.MultiRNNCell(cells)
+        #
+        # # Dropout wrapper
+        # if self.is_training and self.dropout_r > 0:
+        #     cells_stacked = tf.contrib.rnn.DropoutWrapper(
+        #         cells_stacked,
+        #         output_keep_prob=(1. - self.dropout_r),
+        #         variational_recurrent=False,  # https://arxiv.org/abs/1512.05287
+        #         seed=self.seed_value
+        #     )
 
-        # Dropout wrapper
-        if self.is_training and self.dropout_r > 0:
-            cells_stacked = tf.contrib.rnn.DropoutWrapper(
-                cells_stacked,
-                output_keep_prob=(1. - self.dropout_r),
-                variational_recurrent=False,  # https://arxiv.org/abs/1512.05287
-                seed=self.seed_value
-            )
+        cell = NTMCell(
+            controller_layers=self.layers_n,
+            controller_units=self.units_n,
+            memory_size=128,
+            memory_vector_dim=20,
+            read_head_num=8,
+            write_head_num=8
+        )
 
-        '''
-        RETURN:
-            i. output = outputs/activations for all time sequences (output[lastseq] identical to states[lastlayer].h)
-            ii. states = tuples of hidden state and final output
-                states[layer1].c = hidden state for layer1
-                states[layer1].h = final output/activation for layer1 (even with dynamic lengths)
-        '''
-        # LSTM layer,  shape: [batch_n, sequence_max_n, units_n], (c=[batch_n, units_n], h=[batch_n, units_n])
         output, states = tf.nn.dynamic_rnn(
-            cells_stacked,
+            cell,
             self.features_placeholder,
             sequence_length=self.seq_placeholder,
             initial_state=None,  # zero state
@@ -95,7 +98,8 @@ class LSTModel(object):
 
         # Dense layer,  shape: [batch_n, labels_len]
         logits = tf.layers.dense(
-            states[-1].h if self.m1_labels else output,
+            # states[-1] if self.m1_labels else output,
+            output,
             # tf.layers.batch_normalization(output[:, -1, :]),  # batch normalization?
             self.labels_len,
             activation=None,
@@ -173,25 +177,25 @@ class LSTModel(object):
 
     @define_scope
     def error(self):
-
-        output, logits = self.prediction
-
-        pred = tf.argmax(
-            tf.nn.softmax(
-                logits if self.m1_labels else tf.reshape(
-                    logits, [-1, self.labels_len])[:tf.reduce_sum(self.seq_placeholder)]
-            ),
-            axis=1,
-            output_type=tf.int32
-        )  # shape: [batch_n]
-
-        truth = self.label_placeholder if self.m1_labels else tf.reshape(
-            self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
-        pred_positive = tf.equal(pred, truth)
-
-        return output, truth, pred, tf.reduce_mean(
-            tf.cast(pred_positive, tf.float32)  # shape: [batch_n]
-        )  # shape: 1
+        pass
+        # output, logits = self.prediction
+        #
+        # pred = tf.argmax(
+        #     tf.nn.softmax(
+        #         logits if self.m1_labels else tf.reshape(
+        #             logits, [-1, self.labels_len])[:tf.reduce_sum(self.seq_placeholder)]
+        #     ),
+        #     axis=1,
+        #     output_type=tf.int32
+        # )  # shape: [batch_n]
+        #
+        # truth = self.label_placeholder if self.m1_labels else tf.reshape(
+        #     self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
+        # pred_positive = tf.equal(pred, truth)
+        #
+        # return output, truth, pred, tf.reduce_mean(
+        #     tf.cast(pred_positive, tf.float32)  # shape: [batch_n]
+        # )  # shape: 1
     #
     # @define_scope
     # def add_global_step(self):

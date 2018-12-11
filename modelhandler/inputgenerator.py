@@ -26,7 +26,6 @@ class Generator:
             for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
                 yield (data, label, sequence)
 
-
         h5_r.close()
 
         # # instances: 3487772, Epoch 1: 16:46m, Epoch 2: 17:03m

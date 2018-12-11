@@ -7,11 +7,13 @@ import time
 
 class WindowSegregation(object):
 
-    def __init__(self, configs, sequence_max=32, ip_segt=False, stride=1, single_output=False):
+    def __init__(self, configs, sequence_max=32, ip_segt=False, stride=1,
+                 single_output=False, const_sequence=False):
         self.io = configs
         self.sequence_max = sequence_max
         self.ip_segt = ip_segt
         self.single_output = single_output
+        self.const_sequence = const_sequence
 
         # variables initialization
         if self.ip_segt:
@@ -21,9 +23,9 @@ class WindowSegregation(object):
         else:
             self.stride = stride  # stride=1 : "multi-grained", stride=sequence_max : "normal"
             self.exec_winsegt = self._winsegt
-            print("[WinSegt] Window Size:", self.stride)
+            print("[WinSegt] Stride:", self.stride)
 
-        print("[WinSegt] Sequence Max:", self.sequence_max)
+        print("[WinSegt] Window Size:", self.sequence_max)
 
         self.datasets = self._get_files(self.io['input_dir'])
         self.labels_len = len(self.datasets[0]['reader'].ys_r)
@@ -64,7 +66,7 @@ class WindowSegregation(object):
                         meta_h5.create_array(meta_h5.root, k, data, meta_desc[k])
 
                 print("[WinSegt] Meta file saved >", meta_output_name)
-                meta_h5.close()
+            meta_h5.close()
 
     def _get_files(self, data_dir):
         """ assign Reader for each dataset found """
@@ -136,7 +138,7 @@ class WindowSegregation(object):
 
             flow_n = self.exec_winsegt(dataset['reader'], x_w, t_w, ip_w, seq_w, ys_w)
 
-            print("[WinSegt]", flow_n, "flows processed, time elapsed:",
+            print("[WinSegt]", flow_n, "flows generated, time elapsed:",
                   time.strftime("%H:%M:%S", time.gmtime(time.time() - time_elapsed)))
 
             # h5_r.close()
@@ -153,23 +155,104 @@ class WindowSegregation(object):
             dataset['reader'].close()
 
     # bidirectional ip
+    # def _winsegt_ip(self, h5_r, x_w, t_w, ip_w, seq_w, ys_w):
+    #
+    #     window_buffer = {}
+    #
+    #     flow_n = 0  # flow count tracker
+    #     flow_total_n = h5_r.x_r.shape[0]  # total initial flows (asserting flow_total_n = flow_n)
+    #
+    #     next_chunk = True
+    #     while next_chunk:
+    #         x, misc, next_chunk = h5_r.next()
+    #
+    #         t = misc[0][0]
+    #         ip = misc[1][0]
+    #         ys = misc[2:]
+    #
+    #         ip_pair = ip[0] * ip[1] + ((np.absolute(ip[0] - ip[1]) - 1) ** 2 / 4)  # unordered pairing function
+    #
+    #         try:
+    #             # shift existing rows up & replace the last one if the the chunk is full
+    #             # if not, place the new data on top of the chunk starting from index 0
+    #             if window_buffer[ip_pair]['n'] >= self.sequence_max:
+    #                 window_buffer[ip_pair]['x'][:-1] = window_buffer[ip_pair]['x'][1:]
+    #                 window_buffer[ip_pair]['x'][-1][:-1] = x
+    #
+    #                 if window_buffer[ip_pair]['ips'][0] == ip[0]:
+    #                     window_buffer[ip_pair]['x'][-1][-1] = 1
+    #                 else:
+    #                     window_buffer[ip_pair]['x'][-1][-1] = 0
+    #
+    #                 for n, y in enumerate(ys):
+    #                     window_buffer[ip_pair]['ys'][n][:-1] = window_buffer[ip_pair]['ys'][n][1:]
+    #                     window_buffer[ip_pair]['ys'][n][-1] = y[0]
+    #
+    #             else:  # broadcast to n'th row
+    #                 window_buffer[ip_pair]['x'][window_buffer[ip_pair]['n']][:-1] = x
+    #
+    #                 if window_buffer[ip_pair]['ips'][0] == ip[0]:
+    #                     window_buffer[ip_pair]['x'][window_buffer[ip_pair]['n']][-1] = 1
+    #                 else:
+    #                     window_buffer[ip_pair]['x'][window_buffer[ip_pair]['n']][-1] = 0
+    #
+    #                 for n, y in enumerate(ys):
+    #                     window_buffer[ip_pair]['ys'][n][window_buffer[ip_pair]['n']] = y[0]
+    #
+    #                 window_buffer[ip_pair]['n'] += 1
+    #
+    #         except KeyError:
+    #             window_buffer[ip_pair] = {
+    #                 'ips': [ip[0], ip[1]],
+    #                 'n': 1,
+    #                 'x': np.zeros((self.sequence_max, self.features_len)),
+    #                 'ys': [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
+    #             }
+    #             window_buffer[ip_pair]['x'][0][:-1] = x
+    #             window_buffer[ip_pair]['x'][0][-1] = 1
+    #             for n, y in enumerate(ys):
+    #                 window_buffer[ip_pair]['ys'][n][0] = y[0]
+    #
+    #         # insert window-ip segregated dataset
+    #         if not self.const_sequence or (
+    #                 self.const_sequence and window_buffer[ip_pair]['n'] == self.sequence_max
+    #         ):
+    #             x_w.append([window_buffer[ip_pair]['x']])
+    #             t_w.append(t)
+    #             ip_w.append([ip])
+    #             seq_w.append([window_buffer[ip_pair]['n']])
+    #             for n, y_w in enumerate(ys_w):
+    #                 y_w.append([window_buffer[ip_pair]['ys'][n]])
+    #
+    #             flow_n += 1
+    #             print(flow_n, end='\r')
+    #
+    #     if self.const_sequence:
+    #         print("[WinSegt]", flow_total_n, "flows processed")
+    #     else:
+    #         assert flow_total_n == flow_n, "Number of flows processed not tally, expected " + \
+    #                                    str(flow_total_n) + " flows"
+    #
+    #     return flow_n
+
     def _winsegt_ip(self, h5_r, x_w, t_w, ip_w, seq_w, ys_w):
 
         window_buffer = {}
 
         flow_n = 0  # flow count tracker
-        flow_total_n = h5_r.x_r.shape[0]  # total initial flows (asserting flow_total_n = flow_n)
+
+        if h5_r.t_r.shape[0] == 0 or h5_r.ip_r.shape[0] == 0:
+            print("[WinSegt] No IP Address / time")
+            return 0
 
         next_chunk = True
+
         while next_chunk:
             x, misc, next_chunk = h5_r.next()
 
-            t = misc[0][0]
-            ip = misc[1][0]
+            t = misc[0]
+            ip = misc[1]
             ys = misc[2:]
-
-            flow_n += 1
-            print(flow_n, end='\r')
 
             ip_pair = ip[0] * ip[1] + ((np.absolute(ip[0] - ip[1]) - 1) ** 2 / 4)  # unordered pairing function
 
@@ -215,15 +298,18 @@ class WindowSegregation(object):
                     window_buffer[ip_pair]['ys'][n][0] = y[0]
 
             # insert window-ip segregated dataset
-            x_w.append([window_buffer[ip_pair]['x']])
-            t_w.append(t)
-            ip_w.append([ip])
-            seq_w.append([window_buffer[ip_pair]['n']])
-            for n, y_w in enumerate(ys_w):
-                y_w.append([window_buffer[ip_pair]['ys'][n]])
+            if not self.const_sequence or (
+                    self.const_sequence and window_buffer[ip_pair]['n'] == self.sequence_max
+            ):
+                x_w.append([window_buffer[ip_pair]['x']])
+                t_w.append(t)
+                ip_w.append([ip])
+                seq_w.append([window_buffer[ip_pair]['n']])
+                for n, y_w in enumerate(ys_w):
+                    y_w.append([window_buffer[ip_pair]['ys'][n]])
 
-        assert flow_total_n == flow_n, "Number of flows processed not tally, expected " + \
-                                       str(flow_total_n) + " flows"
+                flow_n += 1
+                print(flow_n, end='\r')
 
         return flow_n
 
@@ -235,82 +321,165 @@ class WindowSegregation(object):
         ys_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
         stride = self.stride
 
+        if h5_r.t_r.shape[0] == 0 or h5_r.ip_r.shape[0] == 0:
+            extra_contents = False
+        else:
+            extra_contents = True
+
         next_chunk = True
-        while next_chunk:
-            x, misc, next_chunk = h5_r.next()
 
-            t = misc[0]
-            ip = misc[1]
-            ys = misc[2:]
+        if self.const_sequence:  # for constant sequence length (works for any stride from 1 to sequence_max)
+            while next_chunk:
+                x, misc, next_chunk = h5_r.next()
 
-            if next_chunk:
+                t = misc[0]
+                ip = misc[1]
+                ys = misc[2:]
 
-                if flow_n >= self.sequence_max:  # first <stride> loop: move existing data and insert new data behind
-                    x_buffer[:-stride] = x_buffer[stride:]
-                    x_buffer[-stride:] = x
+                if next_chunk:
+                    x_buffer[:-stride] = x_buffer[stride:]  # x is moved to the top
+                    x_buffer[-stride:] = x  # bottom is replaced with new x
+                    flow_n += stride
 
                     for n in range(self.labels_len):
                         ys_buffer[n][:-stride] = ys_buffer[n][stride:]
                         ys_buffer[n][-stride:] = ys[n]
 
-                        ys_w[n].append([ys_buffer[n]])
+                    # cases when stride less than sequence_max
+                    if flow_n >= self.sequence_max:  # write only when buffer is filled
+                        x_w.append([x_buffer])
+                        seq_w.append([self.sequence_max])
 
-                    seq_w.append([self.sequence_max])
+                        for n in range(self.labels_len):
+                            ys_w[n].append([ys_buffer[n]])
 
-                else:  # broadcast to n'th row (first)
-                    x_buffer[flow_n:stride+flow_n] = x
-                    for n in range(self.labels_len):
-                        ys_buffer[n][flow_n:stride+flow_n] = ys[n]
+                        if extra_contents:  # when stride < sequence_max, only last <stride> contents are written
+                            t_w.append(t)
+                            ip_w.append(ip)
 
-                        ys_w[n].append([ys_buffer[n]])
+                # cases when stride is more than 1
+                else:  # when processing last chunk
+                    cur_shape = x.shape[0]
 
-                    seq_w.append([stride+flow_n])
+                    if cur_shape == stride:  # when last chunk has sufficient length (codes below are duplicated)
+                        x_buffer[:-stride] = x_buffer[stride:]
+                        x_buffer[-stride:] = x
+                        flow_n += stride
 
-                for n in range(stride):
-                    t_w.append(t[n])
-                    ip_w.append([ip[n]])
+                        for n in range(self.labels_len):
+                            ys_buffer[n][:-stride] = ys_buffer[n][stride:]
+                            ys_buffer[n][-stride:] = ys[n]
 
-                flow_n += stride
+                        if flow_n >= self.sequence_max:
+                            x_w.append([x_buffer])
+                            seq_w.append([self.sequence_max])
 
-            else:  # (last)
+                            for n in range(self.labels_len):
+                                ys_w[n].append([ys_buffer[n]])
 
-                cur_shape = x.shape[0]
+                            if extra_contents:
+                                t_w.append(t)
+                                ip_w.append([ip])
 
-                if cur_shape < stride:  # reset buffer to zeros, for strides with len > 1
-                    x_buffer[:] = np.zeros((self.sequence_max, self.features_len))
-                    x_buffer[:cur_shape] = x
+        else:  # dynamic sequence length (updated, but not tested)
+            while next_chunk:
+                x, misc, next_chunk = h5_r.next()
 
-                    for n in range(self.labels_len):
-                        ys_buffer[n][:] = np.zeros(self.sequence_max)
-                        ys_buffer[n][:cur_shape] = ys[n]
+                t = misc[0]
+                ip = misc[1]
+                ys = misc[2:]
 
-                        ys_w[n].append([ys_buffer[n]])
+                if next_chunk:
+                    # cases when stride less than sequence_max
+                    if flow_n >= self.sequence_max:  # write only when buffer is filled
+
+                        x_buffer[:-stride] = x_buffer[stride:]  # x is moved to the top
+                        x_buffer[-stride:] = x  # bottom is replaced with new x
+                        flow_n += stride
+
+                        for n in range(self.labels_len):
+                            ys_buffer[n][:-stride] = ys_buffer[n][stride:]
+                            ys_buffer[n][-stride:] = ys[n]
+
+                        x_w.append([x_buffer])
+                        seq_w.append([self.sequence_max])
+
+                        for n in range(self.labels_len):
+                            ys_w[n].append([ys_buffer[n]])
+
+                        if extra_contents:  # when stride < sequence_max, only last <stride> contents are written
+                            t_w.append(t)
+                            ip_w.append(ip)
+
+                    # contents are prepended instead of appending them
+                    else:  # processing first few chunks when buffer is not filled
+
+                        # when contents exceed (excess contents are ignored and code is not implemented)
+                        if (flow_n + stride) > self.sequence_max:  # occurs when stride > 1 and < sequence_max
+                            print("[WinSegt] WARNING: CONTENTS ARE NOT APPENDED CORRECTLY")
+
+                        else:
+
+                            x_buffer[flow_n:stride + flow_n] = x
+                            flow_n += stride
+
+                            for n in range(self.labels_len):
+                                ys_buffer[n][flow_n:stride + flow_n] = ys[n]
+
+                            if flow_n >= self.sequence_max:
+                                x_w.append([x_buffer])
+                                seq_w.append([flow_n])
+
+                                for n in range(self.labels_len):
+                                    ys_w[n].append([ys_buffer[n]])
+
+                                if extra_contents:
+                                    t_w.append(t)
+                                    ip_w.append([ip])
+
+                else:
+                    cur_shape = x.shape[0]
+
+                    if cur_shape == stride:  # when stride is compatible with last chunk
+                        x_buffer[:-stride] = x_buffer[stride:]
+                        x_buffer[-stride:] = x
+                        flow_n += stride
+
+                        for n in range(self.labels_len):
+                            ys_buffer[n][:-stride] = ys_buffer[n][stride:]
+                            ys_buffer[n][-stride:] = ys[n]
+
+                        x_w.append([x_buffer])
+                        for n in range(self.labels_len):
+                            ys_w[n].append([ys_buffer[n]])
+
+                    else:  # only happens when stride is more than 1 and last chunk is incompatible
+                        x_zeros_buffer = np.zeros((self.sequence_max, self.features_len))  # zeros filler
+                        ys_zeros_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
+
+                        x_zeros_buffer[:-stride] = x_buffer[stride:]
+                        x_zeros_buffer[-stride:] = x  # leftovers = zeros
+                        flow_n += stride
+
+                        for n in range(self.labels_len):
+                            ys_zeros_buffer[n][:-stride] = ys_buffer[n][stride:]
+                            ys_zeros_buffer[n][-stride:] = ys[n]
+
+                        x_w.append([x_zeros_buffer])
+                        for n in range(self.labels_len):
+                            ys_w[n].append([ys_zeros_buffer[n]])
 
                     seq_w.append([cur_shape])
 
-                else:
-                    x_buffer[:-stride] = x_buffer[stride:]
-                    x_buffer[-stride:] = x
+                    if extra_contents:  # when stride < sequence_max, only last <stride> contents are written
+                        t_w.append(t)
+                        ip_w.append(ip)
 
-                    for n in range(self.labels_len):
-                        ys_buffer[n][:-stride] = ys_buffer[n][stride:]
-                        ys_buffer[n][-stride:] = ys[n]
+                print(flow_n, end='\r')
 
-                        ys_w[n].append([ys_buffer[n]])
+        print(flow_total_n, "total flows")
 
-                    seq_w.append([self.sequence_max])
-
-                for n in range(cur_shape):
-                    t_w.append(t[n])
-                    ip_w.append([ip[n]])
-
-                flow_n += cur_shape
-
-            x_w.append([x_buffer])
-
-            print(flow_n, end='\r')
-
-        assert flow_total_n == flow_n, "Number of flows processed not tally, expected " + \
-                                       str(flow_total_n) + " flows"
+        # assert flow_total_n == flow_n, "Number of flows processed not tally, expected " + \
+        #                                str(flow_total_n) + " flows"
 
         return flow_n
