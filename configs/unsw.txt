@@ -1,9 +1,9 @@
 {
     'convert_hd5': {
         'io_csv': {
-            'train_dir': 'E:/data/UNSW',
+            'train_dir': '',
             'test_dir': None,
-            'output_dir': 'E:/data/UNSW/1_converted',
+            'output_dir': '/1_converted',
             'read_chunk_size': 100000,
             'delimiter': ',',
             'header': None,
@@ -41,10 +41,10 @@
 
     'process_hd5': {
         'io_hd5': {
-            'meta_path': 'F:/data/UNSW/meta/1_mappings.hd5',
-            'train_dir': 'G:/data/UNSW/2_winsgt/UNSW-NB15_1_winsgt4s1.hd5',
-            'test_dir': 'G:/data/UNSW/2_winsgt/UNSW-NB15_3_winsgt4s1.hd5',
-            'output_dir': 'F:/data/UNSW/4_processed/winsgt',
+            'meta_path': '/meta/1_mappings.hd5',
+            'train_dir': '/2_winsgt/UNSW-NB15_1_winsgt4s1.hd5',
+            'test_dir': '/2_winsgt/UNSW-NB15_3_winsgt4s1.hd5',
+            'output_dir': '/4_processed',
             'arff_output': 1,  # 1: save only last sequence, 2: save all instances, others: no arff output
             'temporal_dim': False,  # expand dimension for temporal tree (arff_output must be 1, m:1 labeling)
             'read_chunk_size': 100000

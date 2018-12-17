@@ -1,29 +1,33 @@
 import subprocess
 # import logging
 
-parent_directory = "F:/data/UNSW_splits"
+parent_directory = "G:/data/UNSW_splits/2_winsgt4s1_const"  # sequence tuning
 
 hyperparams = [
-    ""
-    # "_s4u32b64l1d40",
-    # "_s4u64b64l1d40",
-    # "_s4u64b128l1d40",
-    # "_s4u128b256l1d40",
-    # "_s4u64b256l1d40",
-    "_s4u128b512l1d40",
-    "_s4u256b512l1d40"
+    # ""  # classical
+    "u32b64l1d40",
+    "u64b64l1d40",
+    "u64b128l1d40",
+    "u64b256l1d40",
+    "u128b256l1d40",
+    "u128b512l1d40",
+    "u256b512l1d40"
 ]
 
 dataset_types = {
-    # "/4_processed": [
-    #     "_winsgt4s4"
-    # ]  # Normal Strides
     "/5_output": [
-        "_winsgt4s1"
-        # "_winsgt16s1_ip"
-    ]  # IP Segt
+        "_winsgt4s1_s4"  # sequence tuning
+    ]  # stacked
+    # "/4_processed": [
+    #     "_winsgt1s1"
+    # ]  # classical
 }
 
+# classical
+# trainset_name = "/UNSW_NB15_training-set"
+# testset_name = "/UNSW_NB15_testing-set"
+
+# stacked
 trainset_name = "/train/UNSW_NB15_training-set"
 testset_name = "/dev/UNSW_NB15_testing-set"
 
@@ -33,7 +37,7 @@ label_types = [
 ]
 
 models = [
-    # "weka.classifiers.trees.J48 -C 0.25 -M 2",
+    # "weka.classifiers.trees.J48 -C 0.25 -M 2",  # classical only
     "weka.classifiers.trees.RandomForest -P 100 -I 100 -num-slots 1 -K 0 -M 1.0 -V 0.001 -S 1",
     "weka.classifiers.functions.SMO -C 1.0 -L 0.001 -P 1.0E-12 -N 0 -V -1 -W 1 -K " +
     "\"weka.classifiers.functions.supportVector.PolyKernel -E 1.0 -C 250007\" " +

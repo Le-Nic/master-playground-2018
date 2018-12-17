@@ -503,10 +503,10 @@ class PreProcessing:
             lbl_group = train_fo.create_group(train_fo.root, "y")
             labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
-                array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
+                array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(shape=()),
                                                        (0, self.trainsets[0]['reader'].sequence_n)
-                                                       if self.meta_migrate and len(
-                                                           self.trainsets[0]['reader'].ys_r[0][0]) > 1
+                                                       if self.meta_migrate
+                                                       # and len(self.trainsets[0]['reader'].ys_r[0][0]) > 1
                                                        else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input
@@ -578,6 +578,8 @@ class PreProcessing:
                     if not next_chunk:
                         misc_shape = int(cur_shape / trainset['reader'].sequence_n)
 
+                    # print(misc[3])
+                    # print(misc[3].shape)
                     for n, y_w in enumerate(array_ys):  # loop each class type
                         y_w.append(misc[3 + n])
 
@@ -728,8 +730,6 @@ class PreProcessing:
                                 slice_i = 0  # index for x_buffer_arff
                                 slice_j = 0  # index for x_new
 
-                                print(x_buffer_arff.shape)
-
                                 for i, seq in enumerate(misc[2]):  # loop each instance
                                     x_buffer_arff[slice_i:slice_i + seq] = x_new[slice_j:slice_j+seq]
                                     slice_i += seq
@@ -788,10 +788,10 @@ class PreProcessing:
             lbl_group = test_fo.create_group(test_fo.root, "y")
             labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
-                array_ys.append(test_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(),
+                array_ys.append(test_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(shape=()),
                                                       (0, self.trainsets[0]['reader'].sequence_n)
-                                                      if self.meta_migrate and len(
-                                                          self.trainsets[0]['reader'].ys_r[0][0]) > 1
+                                                      if self.meta_migrate
+                                                      # and len(self.trainsets[0]['reader'].ys_r[0][0]) > 1
                                                       else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input

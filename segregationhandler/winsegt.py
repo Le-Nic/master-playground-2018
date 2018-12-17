@@ -321,7 +321,8 @@ class WindowSegregation(object):
         ys_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
         stride = self.stride
 
-        if h5_r.t_r.shape[0] == 0 or h5_r.ip_r.shape[0] == 0:
+        # if h5_r.t_r.shape[0] == 0 or h5_r.ip_r.shape[0] == 0:
+        if h5_r.t_r is None or h5_r.ip_r is None:
             extra_contents = False
         else:
             extra_contents = True
@@ -380,6 +381,8 @@ class WindowSegregation(object):
                             if extra_contents:
                                 t_w.append(t)
                                 ip_w.append([ip])
+
+                print(flow_n, end='\r')
 
         else:  # dynamic sequence length (updated, but not tested)
             while next_chunk:

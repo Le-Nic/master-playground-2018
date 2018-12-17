@@ -34,7 +34,7 @@ class ModelTrainer(object):
                           "l" + str(self.hyperparams['layers_n']) + \
                           "d" + str(int(self.hyperparams['dropout_r']*100)) + \
                           "_y" + str(self.class_type)
-        self.save_output = True
+        self.save_output = configs['save_output'] if configs['save_output'] else None
 
         print("[MT Config.]", "M:1" if self.m1_labels else "M:N", "labeling strategy")
         print("[MT Config.] Sequence:", self.hyperparams['sequence_max_n'])
@@ -43,7 +43,7 @@ class ModelTrainer(object):
         print("[MT Config.] Hidden units:", self.hyperparams['units_n'])
         print("[MT Config.] Layer(s):", self.hyperparams['layers_n'])
         print("[MT Config.] Dropout rate:", self.hyperparams['dropout_r'])
-        print("[MT Config.] Learning rate:", self.hyperparams['learning_r'])
+        # print("[MT Config.] Learning rate:", self.hyperparams['learning_r'])
 
         try:
             self.y_dict = dataset_meta['y_dict']
@@ -134,7 +134,7 @@ class ModelTrainer(object):
         logging.info("[ModelTrainer] restored model > " + trainset['name'] + self.model_name)
 
         output_name = trainset['name'] if devset is None else devset['name']
-        output_path = "F:/data/UNSW_splits/5_output/train/" if devset is None else "F:/data/UNSW_splits/5_output/dev/"
+        output_path = self.save_output + ("/train/" if devset is None else "/dev/")
         pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
 
         # ARFF header creation
@@ -228,7 +228,7 @@ class ModelTrainer(object):
 
         logging.info("[ModelTrainer] vectors > " + output_path + output_name + self.model_name)
         return confusion_matrix(ground_truth, predictions, labels=[
-            label for label in range(len(self.y_dict))]), round(acc_dev / step_dev, 6)
+            label for label in range(len(self.y_dict))]), round(acc_dev / step_dev, 9)
 
     def _validate(self, sess, devsets):
         predictions = []
@@ -261,7 +261,7 @@ class ModelTrainer(object):
                 pass
 
         return confusion_matrix(ground_truth, predictions, labels=[
-            label for label in range(len(self.y_dict))]), round(acc_dev / step_dev, 6)
+            label for label in range(len(self.y_dict))]), round(acc_dev / step_dev, 9)
 
     def validate(self, train_dir, dev_dir):
         np.random.seed = self.seed_value
@@ -282,7 +282,7 @@ class ModelTrainer(object):
                 t = time.time()
                 cm, acc = self._validate(sess, devsets)
 
-                print("[ModelTrainer] acc: %.6f  time: " % acc +
+                print("[ModelTrainer] acc: %.9f  time: " % acc +
                       time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
                 for row in cm:
                     print(" ".join(str(col) for col in row))
@@ -296,8 +296,10 @@ class ModelTrainer(object):
         pathlib.Path(self.saver_dir).mkdir(parents=True, exist_ok=True)
 
         epoch_current = 1
-        prev_acc_dev = .0
-        rollback_counter = 4  # patient for e.stop
+        prev_loss_dev = 999999999.
+        tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
+        # prev_acc_dev = .0
+        # rollback_counter = 4  # patient for e.stop
 
         # check if retraining is needed
         if self.checkpoint_dir:
@@ -305,22 +307,26 @@ class ModelTrainer(object):
                 with open(self.checkpoint_dir + trainsets[0]['name'] + self.model_name + ".log", "r") as log_r:
 
                     saved_count = 0
-                    last_epoch = -1
+                    # last_epoch = -1
                     for line in log_r:
                         log_output = line.split()
+
                         if log_output[0] == "[ModelTrainer]":
                             if log_output[1] == "vectors":  # indication for saved vectors
                                 saved_count += 1
-                            elif log_output[1] == "acc:":
-                                if float(log_output[2]) >= prev_acc_dev:
-                                    prev_acc_dev = float(log_output[2])
-                                    epoch_current = last_epoch + 1
-                            elif log_output[1] == "epoch:":
-                                last_epoch = int(log_output[2])
+                            elif log_output[-1] == "saved":
+                                prev_loss_dev = float(log_output[4])
+                                epoch_current = int(log_output[2]) + 1
+                        #     elif log_output[1] == "acc:":
+                        #         if float(log_output[2]) >= prev_acc_dev:
+                        #             prev_acc_dev = float(log_output[2])
+                        #             epoch_current = last_epoch + 1
+                        #     elif log_output[1] == "epoch:":
+                        #         last_epoch = int(log_output[2])
 
                     if saved_count >= 2:
                         return True
-                    if prev_acc_dev <= .0:
+                    if prev_loss_dev >= 999999999.:
                         self.checkpoint_dir = None
 
             else:
@@ -337,42 +343,25 @@ class ModelTrainer(object):
         for devset in devsets:
             logging.info("[ModelTrainer] Dev Set instances: " + str(devset['gen'].get_instances()))
 
+            if devset['gen'].get_instances() % self.batch_n_test != 0:
+                logging.info("[ModelTrainer] [WARNING] Validation batch size (" +
+                             str(self.batch_n_test) + ") is not tally")
+
         self.model_train = self._model_init(self.hyperparams['batch_n'], True)
         self.model_dev = self._model_init(self.batch_n_test, False)
 
         saver = tf.train.Saver()
 
         with tf.Session() as sess:
-            # summary_writer = tf.summary.FileWriter('./logs', graph_def=sess.graph_def)  # tensorboard
 
-            # h5_r = tb.open_file(trainset['path'], mode='r')
-            # features = h5_r.get_node("/x")
-            # labels = h5_r.get_node("/y/y" + str(self.class_type))
-            # seqs = h5_r.get_node("/seq")
-            # assert features.shape[0] == labels.shape[0] == seqs.shape[0]
-            #
-            # with tf.device('/cpu:0'):
-            #     iterator = self._dataset_prep().make_initializable_iterator()
-            #     next_element = iterator.get_next()
-            #
-            #     sess.run(iterator.initializer, feed_dict={  # (re)initialize iterator's state
-            #         m.features_placeholder: features,
-            #         m.labels_placeholder: labels,
-            #         m.seqs_placeholder: seqs
-            #     })
-
-            # h5_r.close()
-
-            if self.checkpoint_dir or prev_acc_dev > .0:  # retore best weights and epoch
+            if self.checkpoint_dir or prev_loss_dev < 999999999.:  # retore "best" model and epoch
                 saver.restore(sess, self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
-                # with open(self.checkpoint_dir + "epoch", "r") as f:
-                #     epoch_current = int(f.read()) + 1
 
                 logging.info("[ModelTrainer] model restored,  epoch: " + str(epoch_current-1))
                 t = time.time()
                 cm, acc = self._validate(sess, devsets)
 
-                logging.info("[ModelTrainer] acc: %.6f  time: " % acc +
+                logging.info("[ModelTrainer] acc: %.9f  time: " % acc +
                              time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
                 for row in cm:
                     logging.info(" ".join(str(col) for col in row))
@@ -395,7 +384,6 @@ class ModelTrainer(object):
                 try:
                     while True:
                         features_batched, label_batched, seq_batched = sess.run(next_element)
-                        # features_batched, label_batched = sess.run(next_element)
 
                         (_, loss, labels), (output, truth, _, acc) = sess.run(  # error prior backpropagation
                             [self.model_train.optimize, self.model_train.error],
@@ -424,49 +412,57 @@ class ModelTrainer(object):
                 except tf.errors.OutOfRangeError:
                     pass
 
-                logging.info("[ModelTrainer] epoch: " + str(epoch_n) +
-                             "  loss: %.6f" % round(loss_train / step_train, 6) +
-                             "  acc: %.6f" % round(acc_train / step_train, 6) +
-                             "  time: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+                loss_epoch = loss_train / step_train
+                acc_epoch = acc_train / step_train
 
-                if not (epoch_n % 3):  # validation  every 3rd epoch
+                # saver and early stopping
+                if self.saver_dir and (not self.hyperparams['e.stopping'] or (
+                        self.hyperparams['e.stopping'] and epoch_n >= 20 and
+                        loss_epoch < prev_loss_dev)):  # look at weights only after 19th epochs
+
+                    saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
+                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) +
+                                 "  loss: %.9f" % round(loss_epoch, 9) +
+                                 "  acc: %.9f" % round(acc_epoch, 9) +
+                                 "  time: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)) + "  saved")
+                    prev_loss_dev = loss_epoch
+                    tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
+
+                elif not self.saver_dir or self.hyperparams['e.stopping']:
+                    tolerance -= 1
+
+                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) +
+                                 "  loss: %.9f" % round(loss_epoch, 9) +
+                                 "  acc: %.9f" % round(acc_epoch, 9) +
+                                 "  time: " + time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+
+                    if self.hyperparams['e.stopping'] and tolerance <= 0:
+                        logging.info("[ModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
+
+                        if self.save_output:
+                            t = time.time()
+                            _, _ = self._save_output(sess, saver, self.model_train,
+                                                     trainsets[0], self.hyperparams['batch_n'])
+                            cm, acc = self._save_output(sess, saver, self.model_dev,
+                                                        trainsets[0], self.batch_n_test, devsets[0])
+                            logging.info("[ModelTrainer] acc: %.9f  time: " % acc +
+                                         time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
+                            for row in cm:
+                                logging.info(" ".join(str(col) for col in row))
+                        break
+
+                # calculate validation acc every n'th epoch
+                if not (epoch_n % self.hyperparams['calc_dev']):
 
                     t = time.time()
                     cm, acc = self._validate(sess, devsets)
-                    logging.info("[ModelTrainer] acc: %.6f  time: " % acc +
+                    logging.info("[ModelTrainer] acc: %.9f  time: " % acc +
                                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
                     for row in cm:
                         logging.info(" ".join(str(col) for col in row))
 
-                    if acc > prev_acc_dev:  # save/replace model if there's improvement
-                        prev_acc_dev = acc
-                        rollback_counter = 4  # patient for e.stop
-
-                        # epoch_n = sess.run(self.model_train.add_global_step)
-                        if self.saver_dir:
-                            saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
-                            with open(self.saver_dir + "epoch", 'w+') as f:
-                                f.write(str(epoch_n))
-
-                    else:
-                        rollback_counter -= 1
-
-                        if rollback_counter <= 0:  # early stopping criteria met: save output from last checkpoint
-                            logging.info("[ModelTrainer] e.stop,  epoch: " + str(epoch_n - 12))  # patient for e.stop
-
-                            if self.save_output:
-                                t = time.time()
-                                _, _ = self._save_output(sess, saver, self.model_train,
-                                                         trainsets[0], self.hyperparams['batch_n'])
-                                cm, acc = self._save_output(sess, saver, self.model_dev,
-                                                            trainsets[0], self.batch_n_test, devsets[0])
-                                logging.info("[ModelTrainer] acc: %.6f  time: " % acc +
-                                             time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
-                                for row in cm:
-                                    logging.info(" ".join(str(col) for col in row))
-                            break
-
-            if rollback_counter > 0:  # max. epoch reached, save output from last checkpoint
+            # max. epoch reached, save output from last checkpoint
+            if self.hyperparams['e.stopping'] and tolerance > 0:
                 logging.info("[ModelTrainer] maximum epoch, restoring best model")
 
                 if self.save_output:
@@ -476,7 +472,7 @@ class ModelTrainer(object):
                                              trainsets[0], self.hyperparams['batch_n'])
                     cm, acc = self._save_output(sess, saver, self.model_dev,
                                                 trainsets[0], self.batch_n_test, devsets[0])
-                    logging.info("[ModelTrainer] acc: %.6f  time: " % acc +
+                    logging.info("[ModelTrainer] acc: %.9f  time: " % acc +
                                  time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
                     for row in cm:
                         logging.info(" ".join(str(col) for col in row))
@@ -511,7 +507,7 @@ class ModelTrainer(object):
 
                 cm, acc = self._save_output(sess, saver, model_dev, trainsets[0], self.batch_n_test, devsets[0])
 
-                logging.info("[ModelTrainer] acc: %.6f  time: " % acc +
+                logging.info("[ModelTrainer] acc: %.9f  time: " % acc +
                              time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
                 for row in cm:
                     logging.info(" ".join(str(col) for col in row))
