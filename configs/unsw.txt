@@ -41,11 +41,11 @@
 
     'process_hd5': {
         'io_hd5': {
-            'meta_path': '/meta/1_mappings.hd5',
-            'train_dir': '/2_winsgt/UNSW-NB15_1_winsgt4s1.hd5',
-            'test_dir': '/2_winsgt/UNSW-NB15_3_winsgt4s1.hd5',
+            'meta_path': '/meta',
+            'train_dir': '',
+            'test_dir': '',
             'output_dir': '/4_processed',
-            'arff_output': 1,  # 1: save only last sequence, 2: save all instances, others: no arff output
+            'arff_output': 0,  # 1: save only last sequence, 2: save all instances, others: no arff output
             'temporal_dim': False,  # expand dimension for temporal tree (arff_output must be 1, m:1 labeling)
             'read_chunk_size': 100000
         },

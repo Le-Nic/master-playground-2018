@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     ''' HD5 Conversion (step 1) '''
 
-    with open("configs/cicids.txt", 'r') as config_file:
+    with open("configs/cicids_deprecated.txt", 'r') as config_file:
         pp_config = eval(config_file.read())
 
     # pp = PreProcessing(pp_config['convert_hd5'])

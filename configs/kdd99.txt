@@ -4,37 +4,37 @@
             'train_dir': '',
             'test_dir': None,
             'output_dir': '/1_converted',
-            'read_chunk_size': 50000,
+            'read_chunk_size': 10000,
             'delimiter': ',',
             'header': True,
             'dates': [],
             'is_epoch': True,
             'dtypes_in': {
-                0: np.int64, 1: np.float64, 2: np.object, 3: np.object, 4: np.object, 5: np.int64, 6: np.int64, 7: np.int64,
-                8: np.int64, 9: np.float64, 10: np.int64, 11: np.int64, 12: np.float64, 13: np.float64, 14: np.int64, 15: np.int64,
-                16: np.float64, 17: np.float64, 18: np.float64, 19: np.float64, 20: np.int64, 21: np.int64, 22: np.int64, 23: np.int64,
-                24: np.float64, 25: np.float64, 26: np.float64, 27: np.int64, 28: np.int64, 29: np.int64, 30: np.int64, 31: np.int64,
-                32: np.int64, 33: np.int64, 34: np.int64, 35: np.int64, 36: np.int64, 37: np.int64, 38: np.int64, 39: np.int64,
-                40: np.int64, 41: np.int64, 42: np.int64, 43: np.object, 44: np.int64
+                0: np.int64, 1: np.object, 2: np.object, 3: np.object, 4: np.int64, 5: np.int64, 6: np.int64, 7: np.int64,
+                8: np.int64, 9: np.int64, 10: np.int64, 11: np.int64, 12: np.int64, 13: np.int64, 14: np.int64, 15: np.int64,
+                16: np.int64, 17: np.int64, 18: np.int64, 19: np.int64, 20: np.int64, 21: np.int64, 22: np.int64, 23: np.int64,
+                24: np.float64, 25: np.float64, 26: np.float64, 27: np.float64, 28: np.float64, 29: np.float64, 30: np.float64, 31: np.int64,
+                32: np.int64, 33: np.float64, 34: np.float64, 35: np.float64, 36: np.float64, 37: np.float64, 38: np.float64, 39: np.float64,
+                40: np.float64, 41: np.object
             }
         },
         'normalization': 'minmax1r',
         'add_td': None,
         'td_scale': 1,
         'label': {
-            'i': [43],
-            'lbl_normal': ["Normal"]
+            'i': [41],
+            'lbl_normal': ["normal"]
         },
         'pp': {
             't': [],
             'ips': [],
-            'int': [2, 3, 4],  # transform string objects to integers
+            'int': [1, 2, 3],  # transform string objects to integers
             '1hot': [],
             'flg': [],  # .A.... -> 010000 (6)
             '8bit': [],  # 4 -> 00000100 (8)
             '16bit': [],  # 4 -> 0000000000000100 (16)
             'norm': [],  # apply technique selected in 'normalization'
-            'rm': [0]  # col(s) to remove
+            'rm': []  # col(s) to remove
         }
     },
 
@@ -44,7 +44,7 @@
             'train_dir': '',
             'test_dir': '',
             'output_dir': '/4_processed',
-            'arff_output': 2,  # 1: save only last sequence, 2: save all instances, others: no arff output
+            'arff_output': 0,  # 1: save only last sequence, 2: save all instances, others: no arff output
             'temporal_dim': False,  # expand dimension for temporal tree (arff_output must be 1, m:1 labeling)
             'read_chunk_size': 100000
         },
@@ -56,14 +56,14 @@
             'lbl_normal': []
         },
         'pp': {
-            't': [],
-            'ips': [],
-            'int': [],
+            't': [],  # do not input
+            'ips': [],  # do not input
+            'int': [],  # do not input
             '1hot': [1, 2, 3],
             'flg': [],  # .A.... -> 010000 (6)
             '8bit': [],  # 4 -> 00000100 (8)
             '16bit': [],  # 4 -> 0000000000000100 (16)
-            'norm': [0] + list(range(4, 42)),
+            'norm': [0, 4, 5, 7, 8, 9, 10] + list(range(12, 19)) + list(range(22, 41)),
             'rm': []  # col(s) to remove
         }
     }

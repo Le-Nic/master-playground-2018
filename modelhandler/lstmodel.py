@@ -25,7 +25,10 @@ class LSTModel(object):
         self.features_placeholder = placeholders['features']
         self.label_placeholder = placeholders['labels']
         self.seq_placeholder = placeholders['sequences']
-        # self.state_placeholder = state_placeholder
+        try:
+            self.state_placeholder = placeholders['states']
+        except KeyError:
+            self.state_placeholder = None
 
         self.features_len = features_len
         self.labels_len = labels_len
@@ -54,6 +57,16 @@ class LSTModel(object):
     @define_scope
     def prediction(self):
 
+        # LSTM States
+        if self.state_placeholder is not None:
+            state_per_layer_list = tf.unstack(self.state_placeholder, axis=0)
+            rnn_tuple_state = tuple(
+                [tf.nn.rnn_cell.LSTMStateTuple(state_per_layer_list[i][0], state_per_layer_list[i][1])
+                 for i in range(self.layers_n)]
+            )
+        else:
+            rnn_tuple_state = None
+
         # LSTM Cells
         cells = [
             tf.nn.rnn_cell.LSTMCell(
@@ -77,16 +90,19 @@ class LSTModel(object):
         '''
         RETURN:
             i. output = outputs/activations for all time sequences (output[lastseq] identical to states[lastlayer].h)
+            shape: [batch_n, sequence_max_n, units_n]
             ii. states = tuples of hidden state and final output
                 states[layer1].c = hidden state for layer1
                 states[layer1].h = final output/activation for layer1 (even with dynamic lengths)
+            shape for last layer [-1]: (c=[batch_n, units_n], h=[batch_n, units_n])
+            
+            NOTE: output vectors contain "dropout'ed" vectors, states will retain the "original" vectors
         '''
-        # LSTM layer,  shape: [batch_n, sequence_max_n, units_n], (c=[batch_n, units_n], h=[batch_n, units_n])
-        output, states = tf.nn.dynamic_rnn(
+        output, state = tf.nn.dynamic_rnn(
             cells_stacked,
             self.features_placeholder,
             sequence_length=self.seq_placeholder,
-            initial_state=None,  # zero state
+            initial_state=rnn_tuple_state,  # zero state
             dtype=tf.float32,
             time_major=False
         )
@@ -95,7 +111,7 @@ class LSTModel(object):
 
         # Dense layer,  shape: [batch_n, labels_len]
         logits = tf.layers.dense(
-            states[-1].h if self.m1_labels else output,
+            state[-1].h if self.m1_labels else output,
             # tf.layers.batch_normalization(output[:, -1, :]),  # batch normalization?
             self.labels_len,
             activation=None,
@@ -108,7 +124,7 @@ class LSTModel(object):
         )
         # logits = tf.reshape(logits, [self.batch_n, self.sequence_max_n, self.labels_len])  # resize back to 3D
 
-        return output, logits
+        return (output, state), logits
 
     @define_scope
     def optimize(self):
@@ -132,7 +148,7 @@ class LSTModel(object):
         # compute Loss,  shape: [batch_n]
         # m:n - seq2seq.sequence_loss, with sequence mask and averaging over batches
         cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=self.label_placeholder,  # note, deprecated (labels are now in every instance)
+            labels=self.label_placeholder,
             logits=logits,
             name="softmax_crossentropy"
         ) if self.m1_labels else tf.contrib.seq2seq.sequence_loss(
@@ -168,13 +184,12 @@ class LSTModel(object):
             zip(clipped_gradients, trainables),
             name="apply_gradients", global_step=tf.train.get_or_create_global_step())
 
-        return update_step, loss, tf.reshape(
-            self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
+        return update_step, loss
 
     @define_scope
     def error(self):
 
-        output, logits = self.prediction
+        outputs, logits = self.prediction
 
         pred = tf.argmax(
             tf.nn.softmax(
@@ -189,7 +204,7 @@ class LSTModel(object):
             self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
         pred_positive = tf.equal(pred, truth)
 
-        return output, truth, pred, tf.reduce_mean(
+        return outputs, truth, pred, tf.reduce_mean(
             tf.cast(pred_positive, tf.float32)  # shape: [batch_n]
         )  # shape: 1
     #

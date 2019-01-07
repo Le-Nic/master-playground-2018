@@ -61,7 +61,7 @@ class PreProcessing:
             raise FileNotFoundError("[Error] [PreProcessing] No input files found")
 
         # get number of label class for ARFF header
-        if self.meta_migrate and self.io['arff_output']:
+        if self.meta_migrate:
             self.y_arff = []
             if pathlib.Path(self.io['meta_path']).is_file():
                 meta_fi = tb.open_file(self.io['meta_path'], mode='r')
@@ -246,7 +246,6 @@ class PreProcessing:
                     self.x_unq[self.col['ips'][0]] |= set(x[:, col_num])
 
             instance_num -= (self.io['read_chunk_size'] - x.shape[0])
-            self.instances += instance_num
             print("[PreProcessing] [metadata]", instance_num, "intance(s) iterated, time elapsed:",
                   time.strftime("%H:%M:%S", time.gmtime(time.time() - t)))
 
@@ -452,6 +451,8 @@ class PreProcessing:
     def _calc_stddev(self):
         """ datasets iterated again to obtain Std Dev. """
         print("[PreProcessing] [metadata] Calculating Std Dev. ...")
+        for col_num in self.val:
+            self.val[col_num]['v2'] = 0.
 
         for trainset in self.trainsets:
             next_chunk = True
@@ -488,26 +489,26 @@ class PreProcessing:
             train_fo = tb.open_file(output_name + ".hd5", mode='w')
 
             array_x = train_fo.create_earray(train_fo.root, "x", tb.Float64Atom(shape=()),
-                                             (0, self.trainsets[0]['reader'].sequence_n, self.features_n)
+                                             (0, trainset['reader'].sequence_n, self.features_n)
                                              if self.meta_migrate else (0, self.features_n), "Feature Data")
 
-            array_t = train_fo.create_earray(train_fo.root, "t", tb.Float64Atom(shape=()),
-                                             (0,) if self.meta_migrate else (0, len(self.col['t'])),
-                                             "Time") if self.col['t'] or self.meta_migrate else None
+            array_t = train_fo.create_earray(
+                train_fo.root, "t", tb.Float64Atom(shape=()), (0, trainset['reader'].sequence_n)
+                if self.meta_migrate else (0, len(self.col['t'])), "Time"
+            ) if self.col['t'] or self.meta_migrate else None
 
-            array_ip = train_fo.create_earray(train_fo.root, "ip", tb.Int64Atom(shape=()),
-                                              (0, 2) if self.meta_migrate else (0, len(self.col['ips'])),
-                                              "IP Addresses") if self.col['ips'] or self.meta_migrate else None
+            array_ip = train_fo.create_earray(
+                train_fo.root, "ip", tb.Int64Atom(shape=()), (0, trainset['reader'].sequence_n, 2)
+                if self.meta_migrate else (0, len(self.col['ips'])), "IP Addresses"
+            ) if self.col['ips'] or self.meta_migrate else None
 
             array_ys = []
             lbl_group = train_fo.create_group(train_fo.root, "y")
-            labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
+            labels_n = len(trainset['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
-                array_ys.append(train_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(shape=()),
-                                                       (0, self.trainsets[0]['reader'].sequence_n)
-                                                       if self.meta_migrate
-                                                       # and len(self.trainsets[0]['reader'].ys_r[0][0]) > 1
-                                                       else (0,), "Label type " + str(n)))
+                array_ys.append(train_fo.create_earray(
+                    lbl_group, "y" + str(n), tb.Int32Atom(shape=()), (0, trainset['reader'].sequence_n)
+                    if self.meta_migrate else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input
             if self.meta_migrate:
@@ -774,25 +775,26 @@ class PreProcessing:
             test_fo = tb.open_file(output_name + ".hd5", mode='w')
 
             array_x = test_fo.create_earray(test_fo.root, "x", tb.Float64Atom(),
-                                            (0, self.trainsets[0]['reader'].sequence_n, self.features_n)
+                                            (0, testset['reader'].sequence_n, self.features_n)
                                             if self.meta_migrate else (0, self.features_n), "Feature Data")
 
-            array_t = test_fo.create_earray(test_fo.root, "t", tb.Float64Atom(shape=()),
-                                            (0,) if self.meta_migrate else (0, len(self.col['t'])), "Time")
+            array_t = test_fo.create_earray(
+                test_fo.root, "t", tb.Float64Atom(shape=()), (0, testset['reader'].sequence_n)
+                if self.meta_migrate else (0, len(self.col['t'])), "Time"
+            ) if self.col['t'] or self.meta_migrate else None
 
-            array_ip = test_fo.create_earray(test_fo.root, "ip", tb.Int64Atom(shape=()),
-                                             (0, 2) if self.meta_migrate else (0, len(self.col['ips'])),
-                                             "IP Addresses") if self.col['ips'] or self.meta_migrate else None
+            array_ip = test_fo.create_earray(
+                test_fo.root, "ip", tb.Int64Atom(shape=()), (0, testset['reader'].sequence_n, 2)
+                if self.meta_migrate else (0, len(self.col['ips'])), "IP Addresses"
+            ) if self.col['ips'] or self.meta_migrate else None
 
             array_ys = []
             lbl_group = test_fo.create_group(test_fo.root, "y")
-            labels_n = len(self.trainsets[0]['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
+            labels_n = len(testset['reader'].misc[3:]) if self.meta_migrate else self.lbl_type_n
             for n in range(labels_n):
-                array_ys.append(test_fo.create_earray(lbl_group, "y" + str(n), tb.Int32Atom(shape=()),
-                                                      (0, self.trainsets[0]['reader'].sequence_n)
-                                                      if self.meta_migrate
-                                                      # and len(self.trainsets[0]['reader'].ys_r[0][0]) > 1
-                                                      else (0,), "Label type " + str(n)))
+                array_ys.append(test_fo.create_earray(
+                    lbl_group, "y" + str(n), tb.Int32Atom(shape=()), (0, testset['reader'].sequence_n)
+                    if self.meta_migrate else (0,), "Label type " + str(n)))
 
             # HD5/CSV Input
             if self.meta_migrate:
