@@ -363,7 +363,7 @@ class WindowSegregation(object):
             while next_chunk:
                 x, misc, next_chunk = h5_r.next()
 
-                t = misc[0]  # time obtained is (2,1) instead of (2)
+                t = misc[0][0]  # time obtained is (2,1) instead of (2)
                 ip = misc[1][0]
                 ys = misc[2:]
 

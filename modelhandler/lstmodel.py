@@ -38,7 +38,7 @@ class LSTModel(object):
 
         # hyperparameters
         self.batch_n = hyperparams['batch_n'] if is_training else 1
-        self.sequence_max_n = hyperparams['sequence_max_n']
+        self.sequence_max_n = hyperparams['netw_sequence']
 
         self.units_n = hyperparams['units_n']
         self.layers_n = hyperparams['layers_n']
@@ -129,19 +129,19 @@ class LSTModel(object):
     @define_scope
     def optimize(self):
 
-        # class_weights = tf.constant([[1.0, 2.0, 2.0, 2.0, 2.0]])
-        # one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
-        # # deduce weights for batch samples based on their true label
-        # weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
-        # # compute your (unweighted) softmax cross entropy loss
-        # unweighted_losses = tf.nn.softmax_cross_entropy_with_logits(
-        #     labels=one_hot_labels,
-        #     logits=self.prediction
-        # )
-        # # apply the weights, relying on broadcasting of the multiplication
-        # weighted_losses = unweighted_losses * weights
-        # # reduce the result to get your final loss
-        # loss = tf.reduce_mean(weighted_losses)
+        class_weights = tf.constant([[1.0, 2.0, 2.0, 2.0, 2.0]])
+        one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
+        # deduce weights for batch samples based on their true label
+        weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
+        # compute your (unweighted) softmax cross entropy loss
+        unweighted_losses = tf.nn.softmax_cross_entropy_with_logits(
+            labels=one_hot_labels,
+            logits=self.prediction
+        )
+        # apply the weights, relying on broadcasting of the multiplication
+        weighted_losses = unweighted_losses * weights
+        # reduce the result to get your final loss
+        loss = tf.reduce_mean(weighted_losses)
 
         _, logits = self.prediction
 

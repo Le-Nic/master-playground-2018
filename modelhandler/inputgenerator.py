@@ -3,40 +3,51 @@ import tables as tb
 
 class Generator:
     # https://stackoverflow.com/questions/48309631/tensorflow-tf-data-dataset-reading-large-hdf5-files
-    def __init__(self, filepath, class_type, is_stateful_ip, is_m1):
+    def __init__(self, filepath, class_type, is_stateful_ip, is_m1, is_4d=False):
         self.file_path = filepath
         self.class_type = '/y/y' + str(class_type)
         self.is_stateful_ip = is_stateful_ip
         self.is_m1 = is_m1
+        self.is_4d = is_4d
         self.dataset_n = None
 
     def __call__(self):
 
         # # instances: 3487772, Epoch 1: 05:06m, Epoch 2: 05:09m
+
         h5_r = tb.open_file(self.file_path, mode='r')
         x_r = h5_r.get_node('/x')
         y_r = h5_r.get_node(self.class_type)
-        seq_r = h5_r.get_node('/seq')
         ip_r = h5_r.get_node('/ip')
 
-        assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+        if self.is_4d:  # hierarchical model
+            netw_seq_r = h5_r.get_node('/netw_seq')
+            host_seq_r = h5_r.get_node('/host_seq')
 
-        if self.is_m1:
-            if self.is_stateful_ip:
-                for data, label, sequence, ips in zip(
-                        x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), ip_r.iterrows()):
-                    yield (data, label[sequence-1], sequence, ips)
-            else:
-                for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
-                    yield (data, label[sequence-1], sequence)
+            for data, label, netw_sequence, host_sequence in zip(
+                    x_r.iterrows(), y_r.iterrows(), netw_seq_r.iterrows(), host_seq_r.iterrows()):
+                yield (data, label[netw_sequence-1], netw_sequence, host_sequence)
+
         else:
-            if self.is_stateful_ip:
-                for data, label, sequence, ips in zip(
-                        x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), ip_r.iterrows()):
-                    yield (data, label, sequence, ips)
+            seq_r = h5_r.get_node('/seq')
+            assert x_r.shape[0] == y_r.shape[0] == seq_r.shape[0]
+
+            if self.is_m1:
+                if self.is_stateful_ip:
+                    for data, label, sequence, ips in zip(
+                            x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), ip_r.iterrows()):
+                        yield (data, label[sequence-1], sequence, ips)
+                else:
+                    for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
+                        yield (data, label[sequence-1], sequence)
             else:
-                for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
-                    yield (data, label, sequence)
+                if self.is_stateful_ip:
+                    for data, label, sequence, ips in zip(
+                            x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), ip_r.iterrows()):
+                        yield (data, label, sequence, ips)
+                else:
+                    for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
+                        yield (data, label, sequence)
 
         h5_r.close()
 

@@ -154,46 +154,50 @@ class PreProcessing:
                 else:
                     self.get_epoch = lambda x, col_n: x[:, col_n].astype('datetime64[ms]').astype('int64') / 1000
 
-    def _get_files(self, data_dir, is_csv):
+    def _get_files(self, data_dirs, is_csv):
         """ assign Reader for each dataset found """
-        if data_dir is None:
+        if data_dirs is None:
             return []
+
+        if isinstance(data_dirs, str):
+            data_dirs = [data_dirs]
 
         datasets = []
         file_count = 0
 
-        data_path = pathlib.Path(data_dir)
+        for data_dir in data_dirs:
+            data_path = pathlib.Path(data_dir)
 
-        if data_path.is_dir():
-            for child in data_path.iterdir():
+            if data_path.is_dir():
+                for child in data_path.iterdir():
 
-                if pathlib.Path(child).is_file():
-                    file_count += 1
+                    if pathlib.Path(child).is_file():
+                        file_count += 1
 
-                    datasets.append({
-                        'name': child.stem,
-                        'reader': input_reader.CsvReader(
-                            str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
-                            parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
-                            delimiter=self.io['delimiter'], header=self.io['header']
-                        ) if is_csv else input_reader.Hd5Reader(str(child), is_2d=True,
-                                                                read_chunk_size=self.io['read_chunk_size'])
-                    })
+                        datasets.append({
+                            'name': child.stem,
+                            'reader': input_reader.CsvReader(
+                                str(child), label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
+                                parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
+                                delimiter=self.io['delimiter'], header=self.io['header']
+                            ) if is_csv else input_reader.Hd5Reader(str(child), is_2d=True,
+                                                                    read_chunk_size=self.io['read_chunk_size'])
+                        })
 
-        elif data_path.is_file():
-            file_count += 1
+            elif data_path.is_file():
+                file_count += 1
 
-            datasets.append({
-                'name': data_path.stem,
-                'reader': input_reader.CsvReader(
-                    data_dir, label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
-                    parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
-                    delimiter=self.io['delimiter'], header=self.io['header']
-                ) if is_csv else input_reader.Hd5Reader(data_dir, is_2d=True,
-                                                        read_chunk_size=self.io['read_chunk_size'])
-            })
+                datasets.append({
+                    'name': data_path.stem,
+                    'reader': input_reader.CsvReader(
+                        data_dir, label_loc=self.lbl['i'], dtypes=self.io['dtypes_in'],
+                        parse_dates=self.io['dates'], read_chunk_size=self.io['read_chunk_size'],
+                        delimiter=self.io['delimiter'], header=self.io['header']
+                    ) if is_csv else input_reader.Hd5Reader(data_dir, is_2d=True,
+                                                            read_chunk_size=self.io['read_chunk_size'])
+                })
 
-        print("[PreProcessing]", file_count, "file(s) found in >", data_dir)
+            print("[PreProcessing]", file_count, "file(s) found in >", data_dir)
         return datasets
 
     def get_metadata(self):
@@ -613,17 +617,11 @@ class PreProcessing:
                             x_new[:, self.columns_map[col_num]+2] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
                             x_new[:, self.columns_map[col_num]+3] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
 
-                        elif self.normalization == 'minmax2r':  # zscore normalization is not taken care of
+                        else:  # minmax2r, if zscore: do run normalization on 3rd time
                             x_new[:, self.columns_map[col_num]] = np.sin(2 * np.pi * sec_ofday)
                             x_new[:, self.columns_map[col_num]+1] = np.cos(2 * np.pi * sec_ofday)
                             x_new[:, self.columns_map[col_num]+2] = np.sin(2 * np.pi * day_ofweek)
                             x_new[:, self.columns_map[col_num]+3] = np.cos(2 * np.pi * day_ofweek)
-
-                        elif self.normalization == 'zscore':
-                            raise ValueError("Zscore normalization is not compatible with time features")
-
-                        else:
-                            raise ValueError("Values range not chosen for time features")
 
                         # df = pd.DataFrame()  # import pandas as pd
                         # df['sine'] = np.sin(2 * np.pi * sec_ofday)
@@ -895,17 +893,11 @@ class PreProcessing:
                             x_new[:, self.columns_map[col_num] + 3] = (np.sin(2 * np.pi * day_ofweek) + 1) / 2
                             x_new[:, self.columns_map[col_num] + 4] = (np.cos(2 * np.pi * day_ofweek) + 1) / 2
 
-                        elif self.normalization == 'minmax2r':  # zscore normalization is not taken care of
+                        else:  # minmax2r, if zscore: do run normalization on 3rd time
                             x_new[:, self.columns_map[col_num] + 1] = np.sin(2 * np.pi * sec_ofday)
                             x_new[:, self.columns_map[col_num] + 2] = np.cos(2 * np.pi * sec_ofday)
                             x_new[:, self.columns_map[col_num] + 3] = np.sin(2 * np.pi * day_ofweek)
                             x_new[:, self.columns_map[col_num] + 4] = np.cos(2 * np.pi * day_ofweek)
-
-                        elif self.normalization == 'zscore':
-                            raise ValueError("Zscore normalization is not compatible with time features")
-
-                        else:
-                            raise ValueError("Values range not chosen for time features")
 
                     # ips
                     for i, col_num in enumerate(self.col['ips']):

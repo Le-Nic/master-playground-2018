@@ -59,7 +59,7 @@ class IPBatchSegregation(object):
                 'reader': input_reader.Hd5Reader(data_dir, is_2d=True, read_chunk_size=1)
             })
 
-        print("[FlowSegt]", file_count, "file(s) found in >", data_dir)
+        print("[IPBatchSegt]", file_count, "file(s) found in >", data_dir)
         return datasets
 
     def _get_writers(self, h5_w):

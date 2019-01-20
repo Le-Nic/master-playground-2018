@@ -7,11 +7,10 @@ import time
 # DEPRECIATED: update format, and add time
 class TimeSegregation(object):
     """
-    NOTE: 3-class (y1) and 9-class (y3) labels should not be used when the bidirectional parameter is True. The
-    expected behavior after seggregating IP Flows would be: each "dataset" has only one distinct label (many-to-one).
+    NOTE: beware the usage of 3-class (y1) and 9-class (y3) labels when the bidirectional parameter is True
 
     NOTABLE BEHAVIOR:
-    I) loops are based on the flows, instead the loop of, for example: every 1s time.
+    I) loops are based on the flows, instead the loop off of time itself, for example: every 1s time.
 
     # flows_buffer format
      {

@@ -1,0 +1,369 @@
+from modelhandler.hierarchicalmodel import *
+from modelhandler.inputgenerator import Generator
+
+from sklearn.metrics import confusion_matrix
+import tensorflow as tf
+import numpy as np
+import tables as tb
+import os
+import pathlib
+import time
+import logging
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+
+class ModelTrainer(object):
+    def __init__(self, configs, dataset_meta, checkpoint_dir=None, saver_dir=None):
+
+        tf.reset_default_graph()
+
+        self.seed_value = 147
+
+        self.hyperparams = configs['hyperparameters']
+        self.class_type = configs['class_type']
+        self.m1_labels = configs['m1_labels']
+        self.batch_n_test = configs['batch_n_test']
+
+        self._train = self._train_func
+        self._validate = self._validate_func
+
+        self.checkpoint_dir = checkpoint_dir + "/" if checkpoint_dir is not None else None
+        self.saver_dir = saver_dir + "/" if saver_dir is not None else ""
+        self.model_name = "_HS" + str(self.hyperparams['host_sequence']) + \
+                          "NO" + str(self.hyperparams['netw_output_n']) + \
+                          "HO" + str(self.hyperparams['host_output_n']) + \
+                          "U" + str(self.hyperparams['units_n']) + \
+                          "B" + str(self.hyperparams['batch_n']) + \
+                          "L" + str(self.hyperparams['layers_n']) + \
+                          "D" + str(int(self.hyperparams['dropout_r'] * 100)) + \
+                          "LR" + "{:.0e}".format(self.hyperparams['learning_r']) + \
+                          "_y" + str(self.class_type)
+
+        print("[HMT Config.]", "M:1" if self.m1_labels else "M:N", "labeling strategy")
+        print("[HMT Config.] Test set Batch size:", self.batch_n_test)
+        print("[HMT Config.] Network-level Sequence:", self.hyperparams['netw_sequence'])
+        print("[HMT Config.] Host-level Sequence:", self.hyperparams['host_sequence'])
+        print("[HMT Config.] Batch size:", self.hyperparams['batch_n'])
+        print("[HMT Config.] Epochs:", self.hyperparams['epochs_n'])
+        print("[HMT Config.] Hidden units:", self.hyperparams['units_n'])
+        print("[HMT Config.] Layer(s):", self.hyperparams['layers_n'])
+        print("[HMT Config.] Dropout rate:", self.hyperparams['dropout_r'])
+        print("[HMT Config.] Learning rate:", self.hyperparams['learning_r'])
+
+        # get Labels Mapping and Features Length
+        try:
+            self.y_dict = dataset_meta['y_dict']
+            self.features_len = dataset_meta['features_len']
+
+        except TypeError:
+            meta_h5 = tb.open_file(dataset_meta, mode='r')
+            self.y_dict = dict(enumerate(meta_h5.get_node("/y" + str(self.class_type)).read()))
+            self.features_len = len(meta_h5.get_node("/x").read())
+
+            print("[HModelTrainer] Features length:", str(self.features_len))
+            print("[HModelTrainer] Labels:", ', '.join(["{0} - {1}".format(k, v.decode("utf-8"))
+                                                       for k, v in self.y_dict.items()]))
+
+            self.model_train = None
+            meta_h5.close()
+
+    def _get_files(self, data_dir):
+        """ assign Reader for each dataset found """
+        if data_dir is None:
+            return None
+
+        datasets = []
+        file_count = 0
+
+        data_path = pathlib.Path(data_dir)
+
+        if data_path.is_dir():
+            for child in data_path.iterdir():
+
+                if pathlib.Path(child).is_file():
+                    datasets.append({
+                        'name': child.stem,
+                        'path': str(child),
+                        'gen': Generator(str(child), self.class_type, False, self.m1_labels, True)
+                    })
+                    file_count += 1
+
+        elif data_path.is_file():
+            file_count += 1
+            datasets.append({
+                'name': data_path.stem,
+                'path': data_dir,
+                'gen': Generator(data_dir, self.class_type, False, self.m1_labels, True)
+            })
+
+        print("[HModelTrainer]", file_count, "dataset(s) found in >", data_dir)
+        return datasets
+
+    def _model_init(self, batch_n, is_training):
+        return LSTModel({
+            'features': tf.placeholder(tf.float32, name="features", shape=[
+                batch_n, self.hyperparams['netw_sequence'], self.hyperparams['host_sequence'], self.features_len]),
+            'labels': tf.placeholder(tf.int32, name="labels", shape=batch_n if self.m1_labels else [
+                batch_n, self.hyperparams['netw_sequence']]),
+            'netw_sequence': tf.placeholder(tf.int32, name="sequences", shape=batch_n),
+            'host_sequence': tf.placeholder(tf.int32, name="sequences", shape=[
+                batch_n, self.hyperparams['netw_sequence']])
+        }, self.hyperparams, batch_n, self.features_len, len(self.y_dict), self.m1_labels, self.seed_value, is_training)
+
+    def _dataset_prep(self, generator, batch_size):
+
+        dataset = tf.data.Dataset.from_generator(
+            generator,
+            output_types=(tf.float32, tf.int32, tf.int32, tf.int32),
+            output_shapes=(
+                tf.TensorShape(
+                    [self.hyperparams['netw_sequence'], self.hyperparams['host_sequence'], self.features_len]),  # x
+                tf.TensorShape([] if self.m1_labels else [self.hyperparams['sequence_max_n']]),  # y
+                tf.TensorShape([]),  # network-level seq
+                tf.TensorShape([self.hyperparams['netw_sequence']])  # host-level seq
+            )
+        )
+
+        dataset = dataset.batch(batch_size, drop_remainder=True)
+        # dataset = dataset.padded_batch(self.hyperparams['batch_n'], padded_shapes=[])
+        dataset = dataset.prefetch(buffer_size=batch_size)
+
+        return dataset.make_one_shot_iterator().get_next()
+
+    def _validate_func(self, sess, model, testsets, batch_n, log_output, summary_writer):
+
+        final_loss = 0
+
+        for testset in testsets:
+            next_element = self._dataset_prep(testset['gen'], batch_n)
+            t = time.time()
+
+            predictions = []
+            ground_truth = []
+            acc_test = 0
+            loss_test = 0
+            step_test = 0
+
+            try:
+                while True:
+                    features_batched, label_batched, netw_seq_batched, host_seq_batched = sess.run(next_element)
+
+                    truth, pred, loss, acc = sess.run(
+                        model.error,
+                        feed_dict={
+                            model.features_placeholder: features_batched,
+                            model.label_placeholder: label_batched,
+                            model.netw_seq_placeholder: netw_seq_batched,
+                            model.host_seq_placeholder: host_seq_batched
+                        }
+                    )
+
+                    predictions.extend(pred)
+                    ground_truth.extend(truth)
+
+                    acc_test += acc
+                    loss_test += loss
+                    step_test += 1
+
+            except tf.errors.OutOfRangeError:
+                pass
+
+            final_acc = round(acc_test / step_test, 9)
+            final_loss = loss_test / step_test
+            cm = confusion_matrix(ground_truth, predictions, labels=[label for label in range(len(self.y_dict))])
+
+            if log_output:
+                for row in cm:
+                    logging.info(" ".join(str(col) for col in row))
+                logging.info("[ModelTrainer] validation loss: %.9f" % round(
+                    final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
+                    "%H:%M:%S", time.gmtime(time.time() - t)))
+            else:
+                for row in cm:
+                    print(" ".join(str(col) for col in row))
+                print("[ModelTrainer] validation loss: %.9f" % round(
+                    final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
+                    "%H:%M:%S", time.gmtime(time.time() - t)))
+
+        return final_loss
+
+    def validate(self, train_dir, test_dir):
+        np.random.seed(self.seed_value)
+        tf.set_random_seed(self.seed_value)
+
+        trainsets = self._get_files(train_dir)
+        testsets = self._get_files(test_dir)
+
+        model_test = self._model_init(self.batch_n_test, False)
+        saver = tf.train.Saver()
+
+        with tf.Session() as sess:
+            if self.checkpoint_dir:
+                saver.restore(sess, self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
+                print("[ModelTrainer] model restored for validation >",
+                      self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
+
+                self._validate(sess, model_test, testsets, False, self.batch_n_test)
+
+    def _train_func(self, sess, next_element, summary_writer):
+        loss_train = 0
+        acc_train = 0
+        step_train = 0
+
+        try:
+            while True:
+                features_batched, label_batched, netw_seq_batched, host_seq_batched = sess.run(next_element)
+                (_, step_summaries, step), (_, _, loss, acc) = sess.run(  # error prior backpropagation
+                    [self.model_train.optimize, self.model_train.error],
+                    feed_dict={
+                        self.model_train.features_placeholder: features_batched,
+                        self.model_train.label_placeholder: label_batched,
+                        self.model_train.netw_seq_placeholder: netw_seq_batched,
+                        self.model_train.host_seq_placeholder: host_seq_batched
+                    }
+                )
+                summary_writer.add_summary(step_summaries, global_step=step)
+
+                loss_train += loss
+                acc_train += acc
+                step_train += 1
+
+        except tf.errors.OutOfRangeError:
+            return (loss_train / step_train), (acc_train / step_train)
+
+    def train(self, train_dir, test_dir, dev_dir=None):
+        np.random.seed(self.seed_value)
+        tf.set_random_seed(self.seed_value)
+
+        trainsets = self._get_files(train_dir)
+        devsets = self._get_files(dev_dir)
+        testsets = self._get_files(test_dir)
+        pathlib.Path(self.saver_dir).mkdir(parents=True, exist_ok=True)
+
+        epoch_current = 1
+        dev_loss_prev = 999999999.
+        tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
+
+        # ========== Model Restoration Check ==========
+        if self.checkpoint_dir:
+            if os.path.isfile(self.checkpoint_dir + trainsets[0]['name'] + self.model_name + ".log"):
+                with open(self.checkpoint_dir + trainsets[0]['name'] + self.model_name + ".log", "r") as log_r:
+
+                    dev_loss_checkpoint = 999999999.
+                    for line in log_r:
+                        log_output = line.split()
+
+                        if log_output[0] == "[ModelTrainer]":
+                            if log_output[1] == "validation":
+                                dev_loss_checkpoint = float(log_output[3])
+                            elif log_output[-1] == "saved":
+                                dev_loss_prev = dev_loss_checkpoint
+                                epoch_current = int(log_output[2]) + 1
+                            elif log_output[1] == "e.stop,":
+                                return True
+
+                    if dev_loss_prev >= 999999999.:
+                        self.checkpoint_dir = None
+
+            else:
+                self.checkpoint_dir = None
+        # ========== Model Restoration Check ==========
+
+        # Logger Setup
+        log_file = logging.FileHandler(self.saver_dir + trainsets[0]['name'] + self.model_name + ".log")
+        log_console = logging.StreamHandler()
+        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[log_file, log_console])
+
+        logging.info("---- ---- ---- ----")
+
+        for trainset in trainsets:
+            logging.info("[ModelTrainer] Train Set instances: " + str(trainset['gen'].get_instances()))
+        for testset in testsets:
+            logging.info("[ModelTrainer] Test Set instances: " + str(testset['gen'].get_instances()))
+
+            if testset['gen'].get_instances() % self.batch_n_test != 0:
+                logging.info("[ModelTrainer] [WARNING] Testing batch size (" +
+                             str(self.batch_n_test) + ") is not tally")
+
+        # Model Initialization
+        self.model_train = self._model_init(self.hyperparams['batch_n'], True)
+        model_dev = self._model_init(1, False)
+
+        saver = tf.train.Saver()
+
+        with tf.Session() as sess:
+            # TF Summary writer
+            writer_train = tf.summary.FileWriter(
+                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/train")
+                # if self.checkpoint_dir else './logs'
+            )
+            writer_dev = tf.summary.FileWriter(
+                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/val")
+                # if self.checkpoint_dir else './logs'
+            )
+
+            # Model & Weights Restoration (if necessary)
+            if self.checkpoint_dir or dev_loss_prev < 999999999.:
+                saver.restore(sess, self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
+                logging.info("[ModelTrainer] model restored,  epoch: " + str(epoch_current - 1))
+
+                self._validate(sess, model_dev, devsets, 1, True, writer_dev)
+            else:
+                sess.run(tf.global_variables_initializer())
+
+            # ========== Model Training ==========
+            for epoch_n in range(epoch_current, self.hyperparams['epochs_n'] + 1):
+                t = time.time()
+
+                train_loss, acc_epoch = self._train(
+                    sess, self._dataset_prep(trainsets[0]['gen'], self.hyperparams['batch_n']), writer_train)
+                writer_train.add_summary(
+                    tf.Summary(value=[tf.Summary.Value(tag="train_loss", simple_value=train_loss)]),
+                    global_step=epoch_n
+                )
+
+                dev_loss = self._validate(sess, model_dev, devsets, 1, True, writer_dev)
+                writer_dev.add_summary(
+                    tf.Summary(value=[tf.Summary.Value(tag="dev_loss", simple_value=dev_loss)]),
+                    global_step=epoch_n
+                )
+
+                # ========== Saver & Early Stopping ==========
+                if self.saver_dir and (not self.hyperparams['e.stopping'] or (
+                        self.hyperparams['e.stopping'] and dev_loss < dev_loss_prev)):
+                        # and epoch_n >= 10  # look at weights only after 19th epochs
+
+                    saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
+                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
+                        train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
+                        "%H:%M:%S", time.gmtime(time.time() - t)) + "  saved")
+                    dev_loss_prev = dev_loss
+                    tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
+
+                elif not self.saver_dir or self.hyperparams['e.stopping']:
+                    # if dev_loss < 0.05:  # and epoch_n >= 10
+                    tolerance -= 1
+
+                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
+                        train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
+                        "%H:%M:%S", time.gmtime(time.time() - t)))
+
+                    if self.hyperparams['e.stopping'] and tolerance <= 0:
+                        logging.info("[ModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
+                        self._validate(sess, self._model_init(
+                            self.batch_n_test, False), testsets, self.batch_n_test, True, writer_dev)
+                        break
+                # ========== Saver & Early Stopping ==========
+
+            # max. epoch reached, save output from last checkpoint
+            if self.hyperparams['e.stopping'] and tolerance > 0:
+                logging.info("[ModelTrainer] maximum epoch, restoring best model")
+                self._validate(sess, self._model_init(
+                    self.batch_n_test, False), testsets, self.batch_n_test, True, writer_dev)
+            # ========== Model Training ==========
+
+        logging.getLogger().removeHandler(log_file)
+        logging.getLogger().removeHandler(log_console)
+
+        return True

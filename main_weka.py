@@ -1,18 +1,20 @@
 import subprocess
 # import logging
 
-# parent_directory = "G:/data/UNSW_splits/2_winsgt16s1_const"  # sequence tuning
-parent_directory = "G:/data/KDD99_10/2_winsgt4s1_const"  # sequence tuning
+parent_directory = "G:/data/UNSW_splits/2_winsgt8s1_const"  # sequence tuning
+# parent_directory = "G:/data/KDD99_10/2_winsgt8s1_const"  # sequence tuning
 
 hyperparams = [
     # ""  # classical
-    "u32b64l1d40",
-    "u64b64l1d40",
-    "u64b128l1d40",
-    "u64b256l1d40",
-    "u128b256l1d40",
-    "u128b512l1d40",
-    "u256b512l1d40"
+    # "u32b64l3d40",
+    # "u64b64l3d40",
+    # "u64b128l3d40",
+    # "u64b256l3d40",
+    # "u128b256l3d40",
+    # "u128b512l3d40",
+    "u256b128l3d40",
+    "u256b256l3d40",
+    # "u256b512l3d40"
 ]
 
 dataset_types = {
@@ -20,7 +22,7 @@ dataset_types = {
     #     "_winsgt1s1"
     # ]  # classical
     "/5_output": [
-        "_winsgt4s1_s4"  # sequence tuning
+        "_winsgt8s1_s8"  # sequence tuning
     ]  # stacked
     # "/5_output_re": [
     #     "_winsgt16s1_s16"
@@ -34,10 +36,10 @@ dataset_types = {
 # testset_name = "/kdd_test"
 
 # stacked
-# trainset_name = "/train/UNSW_NB15_training-set"
-# testset_name = "/dev/UNSW_NB15_testing-set"
-trainset_name = "/train/kdd_train_10"
-testset_name = "/dev/kdd_test"
+trainset_name = "/train/UNSW_NB15_training-set"
+testset_name = "/dev/UNSW_NB15_testing-set"
+# trainset_name = "/train/kdd_train_10"
+# testset_name = "/dev/kdd_test"
 
 # stacked (re)
 # trainset_name = "/train/UNSW_NB15_testing-set"
@@ -45,7 +47,7 @@ testset_name = "/dev/kdd_test"
 
 label_types = [
     # "_y0_last"  # classical
-    "_y0_1_last"
+    "_y0_3_last"
     # "_y1_last"
 ]
 
