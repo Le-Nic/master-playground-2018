@@ -60,12 +60,41 @@ class LSTModel(object):
     @define_scope
     def prediction(self):
 
-        # Both host & network level share the same cell (problem when doing more than 1 layer, do fix)
-        netw_cell = BNLSTMCell(self.units_n, self.is_training, seed=self.seed_value)  # h-h batchnorm LSTMCell
-        netw_cell = tf.nn.rnn_cell.MultiRNNCell([netw_cell] * self.layers_n)
+        if self.is_training:
+            host_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.DropoutWrapper(
+                    tf.nn.rnn_cell.GRUCell(
+                        num_units=self.units_n, dtype=tf.float32, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                            uniform=True, seed=self.seed_value, dtype=tf.float32
+                        )
+                    ), output_keep_prob=1. - self.dropout_r, seed=self.seed_value
+                ) for _ in range(self.layers_n)
+            ])
+            netw_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.DropoutWrapper(
+                    tf.nn.rnn_cell.GRUCell(
+                        num_units=self.units_n, dtype=tf.float32, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                            uniform=True, seed=self.seed_value, dtype=tf.float32
+                        )
+                    ), output_keep_prob=1.-self.dropout_r, seed=self.seed_value
+                ) for _ in range(self.layers_n)
+            ])
 
-        host_cell = BNLSTMCell(self.units_n, self.is_training, seed=self.seed_value)  # h-h batchnorm LSTMCell
-        host_cell = tf.nn.rnn_cell.MultiRNNCell([host_cell] * self.layers_n)
+        else:
+            host_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.GRUCell(
+                    num_units=self.units_n, dtype=tf.float32, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                        uniform=True, seed=self.seed_value, dtype=tf.float32
+                    )
+                ) for _ in range(self.layers_n)
+            ])
+            netw_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.GRUCell(
+                    num_units=self.units_n, dtype=tf.float32, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                        uniform=True, seed=self.seed_value, dtype=tf.float32
+                    )
+                ) for _ in range(self.layers_n)
+            ])
 
         # Host-level e.g. (64 ,8, 8, 238) -> (512, 8, 238)
         host_level_inputs = tf.reshape(self.features_placeholder, [
@@ -79,59 +108,60 @@ class LSTModel(object):
 
         with tf.variable_scope('host') as host_scope:
             # (512, 8, 32), e.g. units_n = 32
-            word_encoder_output, _ = bidirectional_rnn(
-                cell_fw=netw_cell, cell_bw=netw_cell,
-                # cell=netw_cell,
-                inputs_embedded=host_level_inputs,
-                input_lengths=host_level_lengths,
+            # word_encoder_output, _ = bidirectional_rnn(
+            #     cell_fw=host_cell, cell_bw=host_cell,
+            #     # cell=host_cell,
+            #     inputs_embedded=host_level_inputs,
+            #     input_lengths=host_level_lengths,
+            #     scope=host_scope
+            # )
+            host_encoder_output, _ = tf.nn.dynamic_rnn(
+                host_cell,
+                host_level_inputs,
+                sequence_length=host_level_lengths,
+                # initial_state=rnn_tuple_state,  # zero state
+                dtype=tf.float32,
+                time_major=False,
                 scope=host_scope
             )
 
             with tf.variable_scope('attention') as attention_scope:
                 # (512, 238), e.g. host_output_n = 238
                 host_level_output = task_specific_attention(
-                    word_encoder_output,
+                    host_encoder_output,
                     self.host_output_n,
                     initializer=tf.contrib.layers.xavier_initializer(seed=self.seed_value),
                     scope=attention_scope
                 )
 
-            with tf.variable_scope('dropout'):
-                host_level_output = tf.layers.dropout(
-                    host_level_output,
-                    rate=self.dropout_r,
-                    seed=self.seed_value,
-                    training=self.is_training
-                )
-
         # Network-level (64, 8, 238)
-        network_inputs = tf.reshape(host_level_output, [self.batch_n, self.netw_seq, self.host_output_n])
+        network_level_inputs = tf.reshape(host_level_output, [self.batch_n, self.netw_seq, self.host_output_n])
 
         with tf.variable_scope('network') as network_scope:
             # (64, 8, 32)
-            sentence_encoder_output, _ = bidirectional_rnn(
-                cell_fw=host_cell, cell_bw=host_cell,
-                # cell=host_cell,
-                inputs_embedded=network_inputs,
-                input_lengths=self.netw_seq_placeholder,
+            # network_encoder_output, _ = bidirectional_rnn(
+            #     cell_fw=netw_cell, cell_bw=netw_cell,
+            #     # cell=host_cell,
+            #     inputs_embedded=network_level_inputs,
+            #     input_lengths=self.netw_seq_placeholder,
+            #     scope=network_scope
+            # )
+            network_encoder_output, _ = tf.nn.dynamic_rnn(
+                netw_cell,
+                network_level_inputs,
+                sequence_length=self.netw_seq_placeholder,
+                dtype=tf.float32,
+                time_major=False,
                 scope=network_scope
             )
 
             with tf.variable_scope('attention') as attention_scope:
                 # (64, 238), e.g. netw_output_n = 238
                 network_level_output = task_specific_attention(
-                    sentence_encoder_output,
+                    network_encoder_output,
                     self.netw_output_n,
                     initializer=tf.contrib.layers.xavier_initializer(seed=self.seed_value),
                     scope=attention_scope
-                )
-
-            with tf.variable_scope('dropout'):
-                network_level_output = tf.layers.dropout(
-                    network_level_output,
-                    rate=self.dropout_r,
-                    seed=self.seed_value,
-                    training=self.is_training
                 )
 
         with tf.variable_scope('classifier'):
@@ -171,7 +201,7 @@ class LSTModel(object):
     def optimize(self):
         # normal to attack ratio (~18.2968 : 1)
 
-        logits, loss = self.prediction
+        _, loss = self.prediction
         tf.summary.scalar('loss', loss)
 
         tvars = tf.trainable_variables()

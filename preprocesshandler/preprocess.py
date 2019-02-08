@@ -163,9 +163,9 @@ class PreProcessing:
             data_dirs = [data_dirs]
 
         datasets = []
-        file_count = 0
 
         for data_dir in data_dirs:
+            file_count = 0
             data_path = pathlib.Path(data_dir)
 
             if data_path.is_dir():

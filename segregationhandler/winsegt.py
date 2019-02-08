@@ -363,8 +363,8 @@ class WindowSegregation(object):
             while next_chunk:
                 x, misc, next_chunk = h5_r.next()
 
-                t = misc[0][0]  # time obtained is (2,1) instead of (2)
-                ip = misc[1][0]
+                t = misc[0]  # time obtained is (2,1) instead of (2), remove [0] if no time attribute
+                ip = misc[1]  # ip obtained is (2,1) instead of (2), remove [0] if no ip attribute
                 ys = misc[2:]
 
                 if next_chunk:
@@ -435,7 +435,7 @@ class WindowSegregation(object):
                 x, misc, next_chunk = h5_r.next()
 
                 t = misc[0]
-                ip = misc[1][0]
+                ip = misc[1]
                 ys = misc[2:]
 
                 if next_chunk:
@@ -483,16 +483,15 @@ class WindowSegregation(object):
 
                             flow_n += stride
 
-                            if flow_n >= self.sequence_max:
-                                x_w.append([x_buffer])
-                                seq_w.append([flow_n])
+                            x_w.append([x_buffer])
+                            seq_w.append([flow_n])
 
-                                for n in range(self.labels_len):
-                                    ys_w[n].append([ys_buffer[n]])
+                            for n in range(self.labels_len):
+                                ys_w[n].append([ys_buffer[n]])
 
-                                if extra_contents:
-                                    t_w.append([t_buffer])
-                                    ip_w.append([ip_buffer])
+                            if extra_contents:
+                                t_w.append([t_buffer])
+                                ip_w.append([ip_buffer])
 
                 else:
                     cur_shape = x.shape[0]
@@ -517,23 +516,24 @@ class WindowSegregation(object):
                             ip_w.append([ip_buffer])
 
                         flow_n += stride
+                        seq_w.append([self.sequence_max])
 
                     else:  # only happens when stride is more than 1 and last chunk is incompatible
                         x_zeros_buffer = np.zeros((self.sequence_max, self.features_len))  # zeros filler
-                        x_zeros_buffer[:-stride] = x_buffer[stride:]
-                        x_zeros_buffer[-stride:] = x  # leftovers = zeros
+                        x_zeros_buffer[:-cur_shape] = x_buffer[cur_shape:]
+                        x_zeros_buffer[-cur_shape:] = x  # leftovers = zeros
                         x_w.append([x_zeros_buffer])
 
                         ys_zeros_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
                         for n in range(self.labels_len):
-                            ys_zeros_buffer[n][:-stride] = ys_buffer[n][stride:]
-                            ys_zeros_buffer[n][-stride:] = ys[n]
+                            ys_zeros_buffer[n][:-cur_shape] = ys_buffer[n][cur_shape:]
+                            ys_zeros_buffer[n][-cur_shape:] = ys[n]
                             ys_w[n].append([ys_zeros_buffer[n]])
 
                         if extra_contents:
                             t_zeros_buffer = np.zeros(self.sequence_max)
-                            t_zeros_buffer[:-stride] = t_buffer[stride:]
-                            t_zeros_buffer[-stride:] = t
+                            t_zeros_buffer[:-cur_shape] = t_buffer[cur_shape:]
+                            t_zeros_buffer[-cur_shape:] = t
                             t_w.append([t_zeros_buffer])
 
                             ip_zeros_buffer = np.zeros((self.sequence_max, 2))
@@ -543,7 +543,7 @@ class WindowSegregation(object):
 
                         flow_n += stride
 
-                    seq_w.append([cur_shape])
+                        seq_w.append([cur_shape])
 
                 print(flow_n, end='\r')
 

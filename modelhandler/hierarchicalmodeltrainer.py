@@ -22,8 +22,10 @@ class ModelTrainer(object):
 
         self.hyperparams = configs['hyperparameters']
         self.class_type = configs['class_type']
+        self.stateful_ip = configs['stateful_ip']
         self.m1_labels = configs['m1_labels']
         self.batch_n_test = configs['batch_n_test']
+        self.batch_n_dev = configs['batch_n_dev']
 
         self._train = self._train_func
         self._validate = self._validate_func
@@ -41,7 +43,8 @@ class ModelTrainer(object):
                           "_y" + str(self.class_type)
 
         print("[HMT Config.]", "M:1" if self.m1_labels else "M:N", "labeling strategy")
-        print("[HMT Config.] Test set Batch size:", self.batch_n_test)
+        print("[MT Config.] Test set Batch size:", self.batch_n_test)
+        print("[MT Config.] Dev set Batch size:", self.batch_n_dev)
         print("[HMT Config.] Network-level Sequence:", self.hyperparams['netw_sequence'])
         print("[HMT Config.] Host-level Sequence:", self.hyperparams['host_sequence'])
         print("[HMT Config.] Batch size:", self.hyperparams['batch_n'])
@@ -106,8 +109,8 @@ class ModelTrainer(object):
                 batch_n, self.hyperparams['netw_sequence'], self.hyperparams['host_sequence'], self.features_len]),
             'labels': tf.placeholder(tf.int32, name="labels", shape=batch_n if self.m1_labels else [
                 batch_n, self.hyperparams['netw_sequence']]),
-            'netw_sequence': tf.placeholder(tf.int32, name="sequences", shape=batch_n),
-            'host_sequence': tf.placeholder(tf.int32, name="sequences", shape=[
+            'netw_sequence': tf.placeholder(tf.int32, name="netw_sequence", shape=batch_n),
+            'host_sequence': tf.placeholder(tf.int32, name="host_sequence", shape=[
                 batch_n, self.hyperparams['netw_sequence']])
         }, self.hyperparams, batch_n, self.features_len, len(self.y_dict), self.m1_labels, self.seed_value, is_training)
 
@@ -131,8 +134,7 @@ class ModelTrainer(object):
 
         return dataset.make_one_shot_iterator().get_next()
 
-    def _validate_func(self, sess, model, testsets, batch_n, log_output, summary_writer):
-
+    def _validate_func(self, sess, model, testsets, batch_n, log_output):
         final_loss = 0
 
         for testset in testsets:
@@ -176,13 +178,13 @@ class ModelTrainer(object):
             if log_output:
                 for row in cm:
                     logging.info(" ".join(str(col) for col in row))
-                logging.info("[ModelTrainer] validation loss: %.9f" % round(
+                logging.info("[HModelTrainer] validation loss: %.9f" % round(
                     final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
                     "%H:%M:%S", time.gmtime(time.time() - t)))
             else:
                 for row in cm:
                     print(" ".join(str(col) for col in row))
-                print("[ModelTrainer] validation loss: %.9f" % round(
+                print("[HModelTrainer] validation loss: %.9f" % round(
                     final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
                     "%H:%M:%S", time.gmtime(time.time() - t)))
 
@@ -201,10 +203,10 @@ class ModelTrainer(object):
         with tf.Session() as sess:
             if self.checkpoint_dir:
                 saver.restore(sess, self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
-                print("[ModelTrainer] model restored for validation >",
+                print("[HModelTrainer] model restored for validation >",
                       self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
 
-                self._validate(sess, model_test, testsets, False, self.batch_n_test)
+                self._validate(sess, model_test, testsets, self.batch_n_test, False)
 
     def _train_func(self, sess, next_element, summary_writer):
         loss_train = 0
@@ -254,7 +256,7 @@ class ModelTrainer(object):
                     for line in log_r:
                         log_output = line.split()
 
-                        if log_output[0] == "[ModelTrainer]":
+                        if log_output[0] == "[HModelTrainer]":
                             if log_output[1] == "validation":
                                 dev_loss_checkpoint = float(log_output[3])
                             elif log_output[-1] == "saved":
@@ -281,51 +283,58 @@ class ModelTrainer(object):
             logging.info("[ModelTrainer] Train Set instances: " + str(trainset['gen'].get_instances()))
         for testset in testsets:
             logging.info("[ModelTrainer] Test Set instances: " + str(testset['gen'].get_instances()))
-
             if testset['gen'].get_instances() % self.batch_n_test != 0:
                 logging.info("[ModelTrainer] [WARNING] Testing batch size (" +
                              str(self.batch_n_test) + ") is not tally")
-
-        # Model Initialization
-        self.model_train = self._model_init(self.hyperparams['batch_n'], True)
-        model_dev = self._model_init(1, False)
-
-        saver = tf.train.Saver()
+        for devset in devsets:
+            logging.info("[ModelTrainer] Test Set instances: " + str(devset['gen'].get_instances()))
+            if devset['gen'].get_instances() % self.batch_n_dev != 0:
+                logging.info("[ModelTrainer] [WARNING] Validation batch size (" +
+                             str(self.batch_n_dev) + ") is not tally")
 
         with tf.Session() as sess:
+            # Model Initialization
+            self.model_train = self._model_init(self.hyperparams['batch_n'], True)
+
             # TF Summary writer
             writer_train = tf.summary.FileWriter(
-                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/train")
-                # if self.checkpoint_dir else './logs'
+                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/train"), sess.graph
             )
             writer_dev = tf.summary.FileWriter(
-                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/val")
-                # if self.checkpoint_dir else './logs'
+                (self.saver_dir + trainsets[0]['name'] + self.model_name + "/val"), sess.graph
             )
+
+            # Model Initialization (dev and test)
+            model_dev = self._model_init(self.batch_n_dev, False)
+            model_test = self._model_init(self.batch_n_test, False)
+
+            # Model & Weights Restoration (if necessary)
+            saver = tf.train.Saver()
 
             # Model & Weights Restoration (if necessary)
             if self.checkpoint_dir or dev_loss_prev < 999999999.:
                 saver.restore(sess, self.checkpoint_dir + trainsets[0]['name'] + self.model_name)
-                logging.info("[ModelTrainer] model restored,  epoch: " + str(epoch_current - 1))
+                logging.info("[HModelTrainer] model restored,  epoch: " + str(epoch_current - 1))
 
-                self._validate(sess, model_dev, devsets, 1, True, writer_dev)
+                self._validate(sess, model_test, testsets, self.batch_n_test, True)
             else:
                 sess.run(tf.global_variables_initializer())
 
             # ========== Model Training ==========
             for epoch_n in range(epoch_current, self.hyperparams['epochs_n'] + 1):
                 t = time.time()
-
                 train_loss, acc_epoch = self._train(
                     sess, self._dataset_prep(trainsets[0]['gen'], self.hyperparams['batch_n']), writer_train)
+                t_train = time.time() - t
+
                 writer_train.add_summary(
-                    tf.Summary(value=[tf.Summary.Value(tag="train_loss", simple_value=train_loss)]),
+                    tf.Summary(value=[tf.Summary.Value(tag="loss", simple_value=train_loss)]),
                     global_step=epoch_n
                 )
 
-                dev_loss = self._validate(sess, model_dev, devsets, 1, True, writer_dev)
+                dev_loss = self._validate(sess, model_dev, devsets, self.batch_n_dev, True)
                 writer_dev.add_summary(
-                    tf.Summary(value=[tf.Summary.Value(tag="dev_loss", simple_value=dev_loss)]),
+                    tf.Summary(value=[tf.Summary.Value(tag="loss", simple_value=dev_loss)]),
                     global_step=epoch_n
                 )
 
@@ -335,32 +344,53 @@ class ModelTrainer(object):
                         # and epoch_n >= 10  # look at weights only after 19th epochs
 
                     saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
-                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
+                    logging.info("[HModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
                         train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
-                        "%H:%M:%S", time.gmtime(time.time() - t)) + "  saved")
+                        "%H:%M:%S", time.gmtime(t_train)) + "  saved")
                     dev_loss_prev = dev_loss
                     tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
 
                 elif not self.saver_dir or self.hyperparams['e.stopping']:
-                    # if dev_loss < 0.05:  # and epoch_n >= 10
                     tolerance -= 1
 
-                    logging.info("[ModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
+                    logging.info("[HModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
                         train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
-                        "%H:%M:%S", time.gmtime(time.time() - t)))
+                        "%H:%M:%S", time.gmtime(t_train)))
 
                     if self.hyperparams['e.stopping'] and tolerance <= 0:
-                        logging.info("[ModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
-                        self._validate(sess, self._model_init(
-                            self.batch_n_test, False), testsets, self.batch_n_test, True, writer_dev)
+                        # evaluate last model
+                        saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name + "_lastepoch")
+                        self._validate(sess, model_test, testsets, self.batch_n_test, True)
+
+                        # evaluate best model
+                        logging.info("[HModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
+
+                        saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
+                        logging.info("[ModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
+
+                        self._validate(sess, model_test, testsets, self.batch_n_test, True)
                         break
+
+                # if not (epoch_n % self.hyperparams['calc_test']):
+                #     test_loss = self._validate(sess, self._model_init(
+                #         self.batch_n_test, False), testsets, self.batch_n_test, True)
+                #     writer_test.add_summary(
+                #         tf.Summary(value=[tf.Summary.Value(tag="loss", simple_value=test_loss)]),
+                #         global_step=epoch_n
+                #     )
                 # ========== Saver & Early Stopping ==========
+
+            writer_train.close()
+            writer_dev.close()
 
             # max. epoch reached, save output from last checkpoint
             if self.hyperparams['e.stopping'] and tolerance > 0:
-                logging.info("[ModelTrainer] maximum epoch, restoring best model")
-                self._validate(sess, self._model_init(
-                    self.batch_n_test, False), testsets, self.batch_n_test, True, writer_dev)
+                logging.info("[HModelTrainer] maximum epoch")
+
+                saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
+                logging.info("[ModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
+
+                self._validate(sess, model_test, testsets, self.batch_n_test, True)
             # ========== Model Training ==========
 
         logging.getLogger().removeHandler(log_file)

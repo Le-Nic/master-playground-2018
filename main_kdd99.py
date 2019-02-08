@@ -1,12 +1,12 @@
 from preprocesshandler.preprocess import PreProcessing
 from segregationhandler.timesegt import TimeSegregation
 from segregationhandler.winsegt import WindowSegregation
-# from inputhandler.dataset_shuffler import DatasetShuffler
-from modelhandler.modeltrainer import ModelTrainer
-# from modelhandler.modeltrainer_stateful import ModelTrainer
+from segregationhandler.ipbatchsegt import IPBatchSegregation
+from segregationhandler.hierarchicalsegt import HierarchicalSegregation
 import numpy as np
 import re
 
+np.random.seed(147)
 
 if __name__ == '__main__':
 
@@ -15,23 +15,27 @@ if __name__ == '__main__':
     # # # # # # # # # #
 
     # Data Set
+    dataset_dir = "F:/data/NSLKDD"
+    # trainset_name = "/kdd_train_10"  # kdd_10
+    # testset_name = "/kdd_test"  # kdd_10
+    # devset_name = "/kdd_dev"  # kdd_10
 
-    dataset_dir = "F:/data/KDD99_10"
-    trainset_name = "/kdd_train_10"
-    devset_name = "/kdd_test"
+    trainset_name = "/KDDTrain+"
+    testset_name = "/KDDTest+"
+    devset_name = "/KDDev"
 
     # Data Structure
-    winsgt_type = "winsgt4s1"
-    is_winsgt_const = "_const"  # empty string if not
-    is_reversed = ""  # swap train and test set if not empty (2-fold validation): "" or "_re"
+    winsgt_type = "winsgt50s50"
+    is_winsgt_const = ""  # is constance sequence: "" or "_const"
     is_ip = ""  # is IP segregated: "" or "_ip"
 
     # Model
+    is_hierc = False
     saver_dir = "/checkpoints"
     checkpoint_dir = "/checkpoints"
 
     # Preprocessing
-    with open("configs/kdd99.txt", 'r') as config_file:
+    with open("configs/kdd99.txt", 'r') as config_file:  # remember to change this for kdd99/nsl-kdd
         pp_config = eval(config_file.read())
 
     # # # # # # # # # #
@@ -42,9 +46,14 @@ if __name__ == '__main__':
     # # START SETUP # #
     # # # # # # # # # #
 
+    if is_hierc:
+        from modelhandler.hierarchicalmodeltrainer import ModelTrainer
+    else:
+        from modelhandler.modeltrainer import ModelTrainer
+
     winsgt_dir = dataset_dir + "/2_" + winsgt_type + is_winsgt_const
-    saver_dir = winsgt_dir + saver_dir + (is_reversed if len(is_reversed) else "")
-    checkpoint_dir = winsgt_dir + checkpoint_dir + (is_reversed if len(is_reversed) else "")
+    saver_dir = winsgt_dir + saver_dir
+    checkpoint_dir = winsgt_dir + checkpoint_dir
 
     # a/pre-pend directory paths
     for key in ['train_dir', 'test_dir', 'output_dir']:
@@ -53,13 +62,19 @@ if __name__ == '__main__':
 
     # assuming only 1 file for each train/test set
     pp_config['process_hd5']['io_hd5']['train_dir'] = winsgt_dir + "/2_winsgt" + \
-        (devset_name if len(is_reversed) else trainset_name) + "_" + winsgt_type + is_ip + ".hd5"
+        trainset_name + "_" + winsgt_type + is_ip + ".hd5"
 
-    pp_config['process_hd5']['io_hd5']['test_dir'] = winsgt_dir + "/2_winsgt" + \
-        (trainset_name if len(is_reversed) else devset_name) + "_" + winsgt_type + is_ip + ".hd5"
+    if len(devset_name):
+        pp_config['process_hd5']['io_hd5']['test_dir'] = [
+            winsgt_dir + "/2_winsgt" + devset_name + "_" + winsgt_type + is_ip + ".hd5",
+            winsgt_dir + "/2_winsgt" + testset_name + "_" + winsgt_type + is_ip + ".hd5"
+        ]
+    else:
+        pp_config['process_hd5']['io_hd5']['test_dir'] = winsgt_dir + "/2_winsgt" + \
+            testset_name + "_" + winsgt_type + is_ip + ".hd5"
 
     pp_config['process_hd5']['io_hd5']['output_dir'] = winsgt_dir + \
-        pp_config['process_hd5']['io_hd5'][key] + is_reversed
+        pp_config['process_hd5']['io_hd5'][key]
 
     pp_config['process_hd5']['io_hd5']['meta_path'] = dataset_dir + \
         pp_config['process_hd5']['io_hd5']['meta_path'] + \
@@ -75,9 +90,9 @@ if __name__ == '__main__':
     # pp.save_metadata(dataset_dir + "/meta", name="1_mappings")
     # pp.transform_trainset()
 
-    ''' Win/Time IP Segregation (step 2) '''
+    ''' Win/Time IP Segregation (step 2a) '''
     flowsgt_config = {
-        'input_dir': dataset_dir + "/1_converted",  # TUNE THIS (specific / whole dir)
+        'input_dir': dataset_dir + "/1_converted/train",  # TUNE THIS (specific / whole dir)
         'output_dir': winsgt_dir + "/2_winsgt",
         'features_len': dataset_dir + "/meta/1_mappings.hd5",
         'meta_output_name': "2_mappings"
@@ -85,72 +100,76 @@ if __name__ == '__main__':
     winsgt_seq = [int(s) for s in winsgt_type.split("winsgt")[1].split("s")]
 
     # winsgt = WindowSegregation(flowsgt_config, sequence_max=winsgt_seq[0], ip_segt=bool(is_ip), stride=winsgt_seq[1],
-    #                            single_output=False, const_sequence=bool(is_winsgt_const))
+    #                            single_output=True, const_sequence=bool(is_winsgt_const))
     # winsgt.window_segregate()
     # winsgt.close()
 
-    # timesgt = TimeSegregation(flowsgt_config, time_window=10, time_out=60, sequence_max=4,
-    #                           bidirectional=True, single_output=True)
-    # timesgt.time_segregate()
-
-    ''' Data Shuffling (step 3) '''
-    shuffle_config = {
-        'input_path': winsgt_dir + "/2_winsgt/UNSW_NB15_combined-set_winsgt4s4.hd5",  # TUNE THIS (specific / whole dir)
-        'output_dir': winsgt_dir + "/3_shuffled",
-        'meta_path': dataset_dir + "/meta/1_mappings.hd5",  # TUNE THIS (without IPSegt)
-        # 'meta_path': dataset_dir + "/meta/2_mappings_timesgt4.hd5",  # TUNE THIS (with IPSegt)
+    ''' IP Batch Rearrange (step 2b) '''
+    ipbatch_config = {
+        'input_dir': winsgt_dir + "/2_winsgt" + trainset_name + "_" + winsgt_type + is_ip + ".hd5",
+        'output_dir': winsgt_dir + "/3_winsgt",
+        'features_len': dataset_dir + "/meta/" + (
+            "2_mappings_" + winsgt_type + is_ip + is_winsgt_const + ".hd5" if is_ip else "/1_mappings.hd5")
     }
+    # ipbatchsgt = IPBatchSegregation(ipbatch_config, 64)
+    # ipbatchsgt.ip_batch_segregate()
+    # ipbatchsgt.close()
 
-    # hd5huffler = DatasetShuffler(shuffle_config)
-    # hd5huffler.shuffle(n_splits=5, test_size=0.1)
-
-    ''' Features Preprocessing (step 4) '''
+    ''' Features Preprocessing (step 3a) '''
     # pp = PreProcessing(pp_config['process_hd5'])  # HD5 for tensorflow
     # pp.get_metadata()
-    # pp.save_metadata(dataset_dir + "/meta", name="4_mappings_" + winsgt_type + is_ip + is_winsgt_const + is_reversed)
+    # pp.save_metadata(dataset_dir + "/meta", name="4_mappings_" + winsgt_type + is_ip + is_winsgt_const)
     # pp.transform_trainset()
     # pp.transform_testset()
     # pp.close()
 
-    ''' Model Training (step 5) '''
-
-    dataset_types = {  # loop: every key and value in array
-        ("/4_processed" + is_reversed): ["_" + winsgt_type],  # Normal Strides
-        # "/winsgt_ip": ["_winsgt4s1_ip"]  # IP Segt
+    ''' Features Preprocessing (step 3b) '''
+    hiercsgt_config = {
+        'input_dir': "F" + winsgt_dir[1:] + "/4_processed" + trainset_name + "_" + winsgt_type + is_ip + ".hd5",
+        'output_dir': "G" + winsgt_dir[1:] + "/5_hiercsgt",
+        'features_len': dataset_dir + "/meta/" + "4_mappings_" + winsgt_type + is_ip + is_winsgt_const + ".hd5"
     }
-    batch_n_tests = [
-        3793  # 311026 instances (/winsgt4s1)
-        # 4203  # 311022 instances (/winsgt8s1)
-        # 1474  # 311014 instances (/winsgt16s1)
-        # 3049  # 310998 instances (/winsgt32s1)
-    ]
+    # hiercsgt = HierarchicalSegregation(hiercsgt_config, host_sequence=4)
+    # hiercsgt.hierc_segregate()
+    # hiercsgt.close()
+
+    ''' Model Training (step 4) '''
+    dataset_types = {
+        '/h5_hiercsgt' if is_hierc else '/4_processed': ["_" + winsgt_type]
+    }
 
     general_configs = {  # loop: every key and value in array
-        'class_type': [0]  # 0: 2-class, 1: 3-class, 2: 5-class, 3: 9-class
+        'class_type': [1]  # 0: 2-class, 1: 3-class, 2: 5-class, 3: 9-class
     }
 
-    hyperparams_configs = [{  # loop: every hyperparameters pair
-        'units_n': 32,
-        'batch_n': 64
-    }, {
-        'units_n': 64,
-        'batch_n': 64
-    }, {
-        'units_n': 64,
-        'batch_n': 128
-    }, {
-        'units_n': 128,
-        'batch_n': 256
-    }, {
-        'units_n': 64,
-        'batch_n': 256
-    }, {
-       'units_n': 128,
-       'batch_n': 512
-    }, {
-       'units_n': 256,
-       'batch_n': 512
+    # Random Grid Search
+    hyperparams_n = 15
+    random_hyperparams_search = {
+        'units_n': list(np.random.uniform(64, 512, hyperparams_n).astype('int')),
+        'batch_n': list(np.random.choice([64, 128, 256, 512], hyperparams_n).astype('int')),
+        'dropout_r': list(np.random.uniform(0.3, 0.7, hyperparams_n).round(2)),
+        'learning_r': list(np.random.choice([0.0001, 0.001, 0.01, 0.1], hyperparams_n)),
     }
+
+    # Grid Search
+    hyperparams_configs = [  # loop: every hyperparameters pair
+        {'layers_n': 1, 'units_n': 128, 'batch_n': 128}, {'layers_n': 1, 'units_n': 128, 'batch_n': 256},  # layer 1
+        {'layers_n': 1, 'units_n': 128, 'batch_n': 512}, {'layers_n': 1, 'units_n': 256, 'batch_n': 128},
+        {'layers_n': 1, 'units_n': 256, 'batch_n': 256}, {'layers_n': 1, 'units_n': 256, 'batch_n': 512},
+        {'layers_n': 1, 'units_n': 384, 'batch_n': 128}, {'layers_n': 1, 'units_n': 384, 'batch_n': 256},
+        {'layers_n': 1, 'units_n': 384, 'batch_n': 512}
+    ]
+
+    batch_n_tests = [
+        # 13523  # (311029, {4-32}, 118) instances (/winsgt{4-32}s1 splits) KDD99
+        # 5636  # (22544, {4-32}, 122) instances (/winsgt{4-32}s1 splits) NSL-KDD
+        41  # winsgt50s50
+    ]
+
+    batch_n_dev = [
+        # 2906  # (49402, {4-32}, 118) instances (/winsgt{4-32}s1 splits) KDD99
+        # 6299  # (12598, {4-32}, 122) instances (/winsgt{4-32}s1 splits) NSL-KDD
+        84  # winsgt50s50
     ]
 
     for batch_n, dataset_dict in enumerate(dataset_types.items()):  # ip / normal
@@ -158,21 +177,24 @@ if __name__ == '__main__':
 
             model_configs = {  # default values
                 'class_type': 1,
-                'stateful_ip': False,
-                'm1_labels': True,
-                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_reversed,
+                # 'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip,
+                'save_output': None,
                 'batch_n_test': batch_n_tests[batch_n],
+                'batch_n_dev': batch_n_dev[batch_n],
+                'stateful_ip': False,  # STATEFUL IP TUNING
+                'm1_labels': False,  # LABEL TUNING
                 'hyperparameters': {
-                    'sequence_max_n': int(re.findall(r"\d+", segt_type)[0]),  # extract first int from segt_type
-                    'batch_n': 32,
-                    'epochs_n': 200,
-                    'units_n': 128,
-                    'layers_n': 1,
-                    'dropout_r': 0.4,  # 0 when performing tests
-                    'learning_r': 0.01,
-                    'decay_r': 0.96,
-                    'calc_dev': 3,
-                    'e.stopping': 3  # use None or 0 if N/A
+                    'netw_sequence': int(re.findall(r"\d+", segt_type)[0]),  # extract first int from segt_type
+                    'host_sequence': 4,  # HIERARCHICAL TUNING
+                    'netw_output_n': 100,  # HIERARCHICAL TUNING
+                    'host_output_n': 100,  # HIERARCHICAL TUNING
+
+                    'dropout_r': 0.,
+                    'learning_r': 0.0001,
+
+                    'e.stopping': 24,  # use None or 0 if N/A
+                    'epochs_n': 400,
+                    'calc_test': 400
                 }
             }
 
@@ -184,31 +206,25 @@ if __name__ == '__main__':
                         for hyperparam, hyperparam_value in hyperparams.items():
                             model_configs['hyperparameters'][hyperparam] = hyperparam_value
 
-                        # myModel = ModelTrainer(
-                        #     model_configs,
-                        #     dataset_dir + "/meta/4_mappings" + segt_type +
-                        #     is_ip + is_winsgt_const + is_reversed + ".hd5",
-                        #     checkpoint_dir,
-                        #     saver_dir
-                        # )
-                        #
-                        # myModel.train(
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         devset_name if len(is_reversed) else trainset_name) + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         trainset_name if len(is_reversed) else devset_name) + segt_type + is_ip + ".hd5"
-                        # )
+                        myModel = ModelTrainer(
+                            model_configs,
+                            dataset_dir + "/meta/4_mappings" + segt_type + is_ip + is_winsgt_const + ".hd5",
+                            checkpoint_dir,
+                            saver_dir
+                        )
+
+                        myModel.train(
+                            winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                            winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
+                            winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
+                        )
 
                         # myModel.validate(
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         devset_name if len(is_reversed) else trainset_name) + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         trainset_name if len(is_reversed) else devset_name) + segt_type + is_ip + ".hd5"
+                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5"
                         # )
                         #
                         # myModel.gen_output(
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         devset_name if len(is_reversed) else trainset_name) + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + (
-                        #         trainset_name if len(is_reversed) else devset_name) + segt_type + is_ip + ".hd5", True
+                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5", True
                         # )

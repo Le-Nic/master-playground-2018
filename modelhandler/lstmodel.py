@@ -1,5 +1,6 @@
 import tensorflow as tf
 import functools
+from modelhandler.bn_lstm import BNLSTMCell
 
 
 # Hafner, Danijar. Structuring Your TensorFlow Models, 2016.
@@ -17,14 +18,29 @@ def define_scope(func):
     return decorator
 
 
+def extract_axis_1(data, ind):
+    """
+    Get specified elements along the first axis of tensor.
+    :param data: Tensorflow tensor that will be subsetted.
+    :param ind: Indices to take (one for each element along axis 0 of data).
+    :return: Subsetted tensor.
+    """
+
+    batch_range = tf.range(tf.shape(data)[0])
+    indices = tf.stack([batch_range, ind], axis=1)
+    res = tf.gather_nd(data, indices)
+
+    return res
+
+
 class LSTModel(object):
     def __init__(self, placeholders,
-                 hyperparams, features_len, labels_len, m1_labels, seed_value, is_training):
+                 hyperparams, batch_n, features_len, labels_len, m1_labels, seed_value, is_training):
 
         # placeholders
         self.features_placeholder = placeholders['features']
         self.label_placeholder = placeholders['labels']
-        self.seq_placeholder = placeholders['sequences']
+        self.netw_seq_placeholder = placeholders['netw_sequence']
         try:
             self.state_placeholder = placeholders['states']
         except KeyError:
@@ -37,17 +53,15 @@ class LSTModel(object):
         self.is_training = is_training
 
         # hyperparameters
-        self.batch_n = hyperparams['batch_n'] if is_training else 1
-        self.sequence_max_n = hyperparams['netw_sequence']
-
+        self.batch_n = batch_n
+        self.netw_seq = hyperparams['netw_sequence']
         self.units_n = hyperparams['units_n']
         self.layers_n = hyperparams['layers_n']
         self.dropout_r = hyperparams['dropout_r'] if is_training else 0.
-
         self.learning_r = hyperparams['learning_r']
-        self.decay_r = hyperparams['decay_r']
+        # self.decay_r = hyperparams['decay_r']
 
-        self.global_step = tf.Variable(0, trainable=False)
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
         self.prediction
         self.optimize
@@ -56,6 +70,31 @@ class LSTModel(object):
 
     @define_scope
     def prediction(self):
+
+        # tf.nn.rnn_cell.GRUCell(
+        #     self.units_n, kernel_initializer=tf.contrib.layers.xavier_initializer(seed=self.seed_value)
+        # ) for _ in range(self.layers_n)
+
+        # LSTM cells
+        if self.is_training:
+            netw_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.DropoutWrapper(
+                    tf.nn.rnn_cell.LSTMCell(
+                        num_units=self.units_n, dtype=tf.float32, initializer=tf.contrib.layers.xavier_initializer(
+                            uniform=True, seed=self.seed_value, dtype=tf.float32
+                        )
+                    ), output_keep_prob=1.-self.dropout_r, seed=self.seed_value
+                ) for _ in range(self.layers_n)
+            ])
+
+        else:
+            netw_cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.nn.rnn_cell.LSTMCell(
+                    num_units=self.units_n, dtype=tf.float32, initializer=tf.contrib.layers.xavier_initializer(
+                        uniform=True, seed=self.seed_value, dtype=tf.float32
+                    )
+                ) for _ in range(self.layers_n)
+            ])
 
         # LSTM States
         if self.state_placeholder is not None:
@@ -66,26 +105,6 @@ class LSTModel(object):
             )
         else:
             rnn_tuple_state = None
-
-        # LSTM Cells
-        cells = [
-            tf.nn.rnn_cell.LSTMCell(
-                num_units=self.units_n, dtype=tf.float32,
-                initializer=tf.contrib.layers.xavier_initializer(
-                    uniform=True, seed=self.seed_value, dtype=tf.float32
-                ), name="lstm_cell"  # , reuse=True
-            ) for _ in range(self.layers_n)
-        ]
-        cells_stacked = tf.nn.rnn_cell.MultiRNNCell(cells)
-
-        # Dropout wrapper
-        if self.is_training and self.dropout_r > 0:
-            cells_stacked = tf.contrib.rnn.DropoutWrapper(
-                cells_stacked,
-                output_keep_prob=(1. - self.dropout_r),
-                variational_recurrent=False,  # https://arxiv.org/abs/1512.05287
-                seed=self.seed_value
-            )
 
         '''
         RETURN:
@@ -98,52 +117,43 @@ class LSTModel(object):
             
             NOTE: output vectors contain "dropout'ed" vectors, states will retain the "original" vectors
         '''
-        output, state = tf.nn.dynamic_rnn(
-            cells_stacked,
-            self.features_placeholder,
-            sequence_length=self.seq_placeholder,
-            initial_state=rnn_tuple_state,  # zero state
-            dtype=tf.float32,
-            time_major=False
-        )
-        # output = tf.reshape(output, [-1, self.units_n])  # resize to 2D (optional)
-        # tf.summary.histogram("states", states)
+
+        with tf.variable_scope('network') as network_scope:
+            output, state = tf.nn.dynamic_rnn(
+                netw_cell,
+                self.features_placeholder,
+                sequence_length=self.netw_seq_placeholder,
+                initial_state=rnn_tuple_state,  # zero state
+                dtype=tf.float32,
+                time_major=False,
+                scope=network_scope
+            )
+            # output = tf.reshape(output, [-1, self.units_n])  # resize to 2D (optional)
+
+        # with tf.variable_scope('dropout'):
+        #     output_dropped = tf.layers.dropout(
+        #         state[-1][1] if self.m1_labels else output,  # lstm
+        #         # output[:, -1, :],  # gru
+        #         rate=self.dropout_r,
+        #         seed=self.seed_value,
+        #         training=self.is_training
+        #     )
 
         # Dense layer,  shape: [batch_n, labels_len]
-        logits = tf.layers.dense(
-            state[-1].h if self.m1_labels else output,
-            # tf.layers.batch_normalization(output[:, -1, :]),  # batch normalization?
-            self.labels_len,
-            activation=None,
-            use_bias=True,
-            kernel_initializer=None,
-            bias_initializer=tf.zeros_initializer(),
-            trainable=True,
-            name="layer_output"
-            # reuse=True
-        )
-        # logits = tf.reshape(logits, [self.batch_n, self.sequence_max_n, self.labels_len])  # resize back to 3D
-
-        return (output, state), logits
-
-    @define_scope
-    def optimize(self):
-
-        class_weights = tf.constant([[1.0, 2.0, 2.0, 2.0, 2.0]])
-        one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
-        # deduce weights for batch samples based on their true label
-        weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
-        # compute your (unweighted) softmax cross entropy loss
-        unweighted_losses = tf.nn.softmax_cross_entropy_with_logits(
-            labels=one_hot_labels,
-            logits=self.prediction
-        )
-        # apply the weights, relying on broadcasting of the multiplication
-        weighted_losses = unweighted_losses * weights
-        # reduce the result to get your final loss
-        loss = tf.reduce_mean(weighted_losses)
-
-        _, logits = self.prediction
+        with tf.variable_scope('classifier'):
+            logits = tf.layers.dense(
+                # dropout will only be applied to output (not state)
+                extract_axis_1(output, self.netw_seq_placeholder - 1) if self.m1_labels else output,
+                self.labels_len,
+                activation=None,
+                use_bias=True,
+                kernel_initializer=tf.contrib.layers.xavier_initializer(seed=self.seed_value),
+                bias_initializer=tf.zeros_initializer(),
+                trainable=True,
+                name="layer_output"
+                # reuse=True
+            )
+            # logits = tf.reshape(logits, [self.batch_n, self.sequence_max_n, self.labels_len])  # resize back to 3D
 
         # compute Loss,  shape: [batch_n]
         # m:n - seq2seq.sequence_loss, with sequence mask and averaging over batches
@@ -152,62 +162,77 @@ class LSTModel(object):
             logits=logits,
             name="softmax_crossentropy"
         ) if self.m1_labels else tf.contrib.seq2seq.sequence_loss(
-            logits,
-            self.label_placeholder,
-            tf.sequence_mask(
-                self.seq_placeholder, maxlen=self.sequence_max_n, dtype=tf.float32
+            logits=logits,
+            targets=self.label_placeholder,
+            weights=tf.sequence_mask(
+                self.netw_seq_placeholder, maxlen=self.netw_seq, dtype=tf.float32
             ),  # for masking variable sequences
             average_across_timesteps=False,
-            average_across_batch=True)
+            average_across_batch=True
+        )
 
-        loss = tf.reduce_mean(cross_entropy)  # shape: 1
-
-        # Learning Rate decay (uses Adam)
-        # learning_rate = tf.train.exponential_decay(
-        #     self.learning_r, self.global_step, decay_steps=1,
-        #     decay_rate=self.decay_r, name="lr_decay"
+        # KDD99_10
+        # class_weights = tf.constant([[0.000587, 0.955254, 0.009385, 0.000084, 0.034691]])  # norm u2r probe dos r2l
+        # one_hot_labels = tf.one_hot(self.label_placeholder, self.labels_len)
+        # weights = tf.reduce_sum(class_weights * one_hot_labels, axis=1)
+        # cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(
+        #     labels=one_hot_labels,
+        #     logits=logits
         # )
+        # cross_entropy = cross_entropy * weights
 
-        # calculate & clip Gradientsad
-        trainables = tf.trainable_variables()  # returns all variables with trainable=True
-        gradients = tf.gradients(loss, trainables, name="gradients")
+        loss = tf.reduce_mean(cross_entropy)
+
+        return (output, state), logits, loss
+
+    @define_scope
+    def optimize(self):
+
+        _, _, loss = self.prediction
+        tf.summary.scalar('loss', loss)
+
+        tvars = tf.trainable_variables()
+
+        # Gradient Clipping
         clipped_gradients, _ = tf.clip_by_global_norm(
-            gradients, clip_norm=5,  # clipping ratio: 5
+            tf.gradients(loss, tvars, name="gradients"),
+            clip_norm=5,
             name="gradient_clipping"
         )
 
-        # Optimization (minimize)
-        update_step = tf.train.AdamOptimizer(
-            # learning_rate=learning_rate,
+        # Adam Optimizer
+        opt = tf.train.AdamOptimizer(
+            self.learning_r,
             name="adam_optimizer"
-        ).apply_gradients(
-            zip(clipped_gradients, trainables),
-            name="apply_gradients", global_step=tf.train.get_or_create_global_step())
+        )
 
-        return update_step, loss
+        # Update gradients
+        update_step = opt.apply_gradients(
+            zip(clipped_gradients, tvars),
+            name="apply_gradients",
+            global_step=self.global_step
+        )
+
+        return update_step, tf.summary.merge_all(), self.global_step  # (op, global_step)
 
     @define_scope
     def error(self):
 
-        outputs, logits = self.prediction
+        outputs, logits, loss = self.prediction
 
+        # double check softmax when using M:N labelling scheme
         pred = tf.argmax(
             tf.nn.softmax(
                 logits if self.m1_labels else tf.reshape(
-                    logits, [-1, self.labels_len])[:tf.reduce_sum(self.seq_placeholder)]
+                    logits, [-1, self.labels_len])[:tf.reduce_sum(self.netw_seq_placeholder)]
             ),
             axis=1,
             output_type=tf.int32
         )  # shape: [batch_n]
 
         truth = self.label_placeholder if self.m1_labels else tf.reshape(
-            self.label_placeholder, [-1])[:tf.reduce_sum(self.seq_placeholder)]
-        pred_positive = tf.equal(pred, truth)
+            self.label_placeholder, [-1])[:tf.reduce_sum(self.netw_seq_placeholder)]
 
-        return outputs, truth, pred, tf.reduce_mean(
-            tf.cast(pred_positive, tf.float32)  # shape: [batch_n]
-        )  # shape: 1
-    #
-    # @define_scope
-    # def add_global_step(self):
-    #     return self.global_step.assign_add(1)
+        return outputs, truth, pred, loss, tf.reduce_mean(
+            tf.cast(tf.equal(pred, truth), tf.float32)  # shape: [batch_n]
+        )  # ((output, state), ground truth, predictions, loss, accuracy)
