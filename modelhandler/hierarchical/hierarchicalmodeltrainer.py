@@ -1,4 +1,4 @@
-from modelhandler.hierarchicalmodel import *
+from modelhandler.hierarchical.hierarchicalmodel import *
 from modelhandler.inputgenerator import Generator
 
 from sklearn.metrics import confusion_matrix
@@ -29,6 +29,7 @@ class ModelTrainer(object):
 
         self._train = self._train_func
         self._validate = self._validate_func
+        self._save_output = self._output_func
 
         self.checkpoint_dir = checkpoint_dir + "/" if checkpoint_dir is not None else None
         self.saver_dir = saver_dir + "/" if saver_dir is not None else ""
@@ -42,9 +43,11 @@ class ModelTrainer(object):
                           "LR" + "{:.0e}".format(self.hyperparams['learning_r']) + \
                           "_y" + str(self.class_type)
 
+        self.save_output = configs['save_output'] if configs['save_output'] else None
+
         print("[HMT Config.]", "M:1" if self.m1_labels else "M:N", "labeling strategy")
-        print("[MT Config.] Test set Batch size:", self.batch_n_test)
-        print("[MT Config.] Dev set Batch size:", self.batch_n_dev)
+        print("[HMT Config.] Test set Batch size:", self.batch_n_test)
+        print("[HMT Config.] Dev set Batch size:", self.batch_n_dev)
         print("[HMT Config.] Network-level Sequence:", self.hyperparams['netw_sequence'])
         print("[HMT Config.] Host-level Sequence:", self.hyperparams['host_sequence'])
         print("[HMT Config.] Batch size:", self.hyperparams['batch_n'])
@@ -151,7 +154,7 @@ class ModelTrainer(object):
                 while True:
                     features_batched, label_batched, netw_seq_batched, host_seq_batched = sess.run(next_element)
 
-                    truth, pred, loss, acc = sess.run(
+                    _, truth, pred, loss, acc = sess.run(
                         model.error,
                         feed_dict={
                             model.features_placeholder: features_batched,
@@ -208,6 +211,102 @@ class ModelTrainer(object):
 
                 self._validate(sess, model_test, testsets, self.batch_n_test, False)
 
+    def _output_func(self, sess, model, dataset, batch_n, is_trainset=True, log_output=False):
+        test_name = "train" if is_trainset else "test"
+        output_name = dataset['name']
+        output_path = self.save_output + ("/train/" if is_trainset else "/dev/")  # gen Dev / Test
+        pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
+
+        # ARFF header creation
+        arff_w_last = open(output_path + output_name + self.model_name + "_" + str(self.hyperparams['layers_n']) +
+                           "_last.arff", 'wb')
+
+        header_last = np.array(["@relation " + output_name + self.model_name + "_last", ""])
+
+        for n in range(1, self.features_len+1):  # original data
+            header_last = np.append(header_last, ("@attribute '" + str(n) + "' numeric"))
+
+        for layer_n in range(1, self.hyperparams['layers_n']+1):
+            for n in range(self.hyperparams['netw_output_n']):
+                header_last = np.append(header_last, ("@attribute '" + str(layer_n) + "_" + str(n) + "' numeric"))
+        header_label = "@attribute 'y' {" + ','.join(
+            str(y) for y in range(len(self.y_dict))) + "}"
+        header_last = np.append(header_last, header_label)
+        header_last = np.append(header_last, ("", "@data"))
+
+        np.savetxt(arff_w_last, header_last[np.newaxis].T, fmt='%s')
+
+        next_element = self._dataset_prep(dataset['gen'], batch_n)
+        t = time.time()
+
+        predictions = []
+        ground_truth = []
+        acc_test = 0
+        loss_test = 0
+        step_test = 0
+
+        try:
+            while True:
+                features_batched, label_batched, netw_seq_batched = sess.run(next_element)
+                # features_batched, label_batched, netw_seq_batched, label_extra = sess.run(next_element)  # y1
+
+                output, truth, pred, loss, acc = sess.run(
+                    model.error,
+                    feed_dict={
+                        model.features_placeholder: features_batched,
+                        model.label_placeholder: label_batched,
+                        model.netw_seq_placeholder: netw_seq_batched
+                    }
+                )
+
+                predictions.extend(pred)
+                ground_truth.extend(truth)
+
+                acc_test += acc
+                loss_test += loss
+                step_test += 1
+
+                # noinspection PyTypeChecker
+                np.savetxt(
+                    arff_w_last, np.append(
+                        np.append(
+                            features_batched[np.arange(features_batched.shape[0]), netw_seq_batched - 1],
+                            output, axis=1
+                        ), truth[np.newaxis].T, axis=1
+                    ),
+                    #     np.concatenate([s.h for s in state], axis=1), label_extra[np.newaxis].T, axis=1),  # y1
+                    fmt="%.18e," * (self.hyperparams['units_n']) * self.hyperparams['layers_n'] +
+                        "%.18e," * self.features_len + "%i")
+
+        except tf.errors.OutOfRangeError:
+            pass
+
+        arff_w_last.close()
+
+        if log_output:
+            logging.info("[ModelTrainer] vectors > " + output_path + output_name + self.model_name)
+        else:
+            print("[ModelTrainer] vectors > " + output_path + output_name + self.model_name)
+
+        final_acc = round(acc_test / step_test, 9)
+        final_loss = loss_test / step_test
+        cm = confusion_matrix(ground_truth, predictions, labels=[label for label in range(len(self.y_dict))])
+
+        if log_output:
+            for row in cm:
+                logging.info(" ".join(str(col) for col in row))
+            logging.info("[ModelTrainer] " + test_name + " loss: %.9f" % round(
+                final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
+                "%H:%M:%S", time.gmtime(time.time() - t)))
+        else:
+            for row in cm:
+                print(" ".join(str(col) for col in row))
+            print("[ModelTrainer] " + test_name + " loss: %.9f" % round(
+                final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
+                "%H:%M:%S", time.gmtime(time.time() - t)))
+
+        return final_loss
+
     def _train_func(self, sess, next_element, summary_writer):
         loss_train = 0
         acc_train = 0
@@ -216,7 +315,7 @@ class ModelTrainer(object):
         try:
             while True:
                 features_batched, label_batched, netw_seq_batched, host_seq_batched = sess.run(next_element)
-                (_, step_summaries, step), (_, _, loss, acc) = sess.run(  # error prior backpropagation
+                (_, step_summaries, step), (_, _, _, loss, acc) = sess.run(  # error prior backpropagation
                     [self.model_train.optimize, self.model_train.error],
                     feed_dict={
                         self.model_train.features_placeholder: features_batched,

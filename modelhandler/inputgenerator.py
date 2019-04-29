@@ -18,6 +18,7 @@ class Generator:
         h5_r = tb.open_file(self.file_path, mode='r')
         x_r = h5_r.get_node('/x')
         y_r = h5_r.get_node(self.class_type)
+        # y_extra_r = h5_r.get_node('/y/y1')  # additional y_extra
         ip_r = h5_r.get_node('/ip')
 
         if self.is_4d:  # hierarchical model
@@ -38,8 +39,11 @@ class Generator:
                             x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), ip_r.iterrows()):
                         yield (data, label[sequence-1], sequence, ips)
                 else:
+                    # for data, label, sequence, label_extra in zip(  # additional y_extra
+                    #         x_r.iterrows(), y_r.iterrows(), seq_r.iterrows(), y_extra_r.iterrows()
+                    # ):  # additional y_extra
                     for data, label, sequence in zip(x_r.iterrows(), y_r.iterrows(), seq_r.iterrows()):
-                        yield (data, label[sequence-1], sequence)
+                        yield (data, label[sequence-1],  sequence)
             else:
                 if self.is_stateful_ip:
                     for data, label, sequence, ips in zip(

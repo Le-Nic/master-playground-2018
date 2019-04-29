@@ -519,31 +519,58 @@ class WindowSegregation(object):
                         seq_w.append([self.sequence_max])
 
                     else:  # only happens when stride is more than 1 and last chunk is incompatible
-                        x_zeros_buffer = np.zeros((self.sequence_max, self.features_len))  # zeros filler
-                        x_zeros_buffer[:-cur_shape] = x_buffer[cur_shape:]
-                        x_zeros_buffer[-cur_shape:] = x  # leftovers = zeros
-                        x_w.append([x_zeros_buffer])
 
-                        ys_zeros_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
-                        for n in range(self.labels_len):
-                            ys_zeros_buffer[n][:-cur_shape] = ys_buffer[n][cur_shape:]
-                            ys_zeros_buffer[n][-cur_shape:] = ys[n]
-                            ys_w[n].append([ys_zeros_buffer[n]])
+                        # touchstroke (cases when stride > instances,
+                        # if not implemented, data are appended at the back instead
+                        if flow_n == 0:
 
-                        if extra_contents:
-                            t_zeros_buffer = np.zeros(self.sequence_max)
-                            t_zeros_buffer[:-cur_shape] = t_buffer[cur_shape:]
-                            t_zeros_buffer[-cur_shape:] = t
-                            t_w.append([t_zeros_buffer])
+                            x_zeros_buffer = np.zeros((self.sequence_max, self.features_len))  # zeros filler
+                            x_zeros_buffer[:cur_shape] = x
+                            x_w.append([x_zeros_buffer])
 
-                            ip_zeros_buffer = np.zeros((self.sequence_max, 2))
-                            ip_zeros_buffer[:-stride] = ip_buffer[stride:]
-                            ip_zeros_buffer[-stride:] = ip
-                            ip_w.append([ip_zeros_buffer])
+                            ys_zeros_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
+                            for n in range(self.labels_len):
+                                ys_zeros_buffer[n][:cur_shape] = ys[n]
+                                ys_w[n].append([ys_zeros_buffer[n]])
 
-                        flow_n += stride
+                            if extra_contents:
+                                t_zeros_buffer = np.zeros(self.sequence_max)
+                                t_zeros_buffer[:cur_shape] = t
+                                t_w.append([t_zeros_buffer])
 
-                        seq_w.append([cur_shape])
+                                ip_zeros_buffer = np.zeros((self.sequence_max, 2))
+                                ip_zeros_buffer[:stride] = ip
+                                ip_w.append([ip_zeros_buffer])
+
+                            flow_n += stride
+
+                            seq_w.append([cur_shape])
+                        else:
+                            x_zeros_buffer = np.zeros((self.sequence_max, self.features_len))  # zeros filler
+                            x_zeros_buffer[:-cur_shape] = x_buffer[cur_shape:]
+                            x_zeros_buffer[-cur_shape:] = x  # leftovers = zeros
+                            x_w.append([x_zeros_buffer])
+
+                            ys_zeros_buffer = [np.zeros(self.sequence_max) for _ in range(self.labels_len)]
+                            for n in range(self.labels_len):
+                                ys_zeros_buffer[n][:-cur_shape] = ys_buffer[n][cur_shape:]
+                                ys_zeros_buffer[n][-cur_shape:] = ys[n]
+                                ys_w[n].append([ys_zeros_buffer[n]])
+
+                            if extra_contents:
+                                t_zeros_buffer = np.zeros(self.sequence_max)
+                                t_zeros_buffer[:-cur_shape] = t_buffer[cur_shape:]
+                                t_zeros_buffer[-cur_shape:] = t
+                                t_w.append([t_zeros_buffer])
+
+                                ip_zeros_buffer = np.zeros((self.sequence_max, 2))
+                                ip_zeros_buffer[:-stride] = ip_buffer[stride:]
+                                ip_zeros_buffer[-stride:] = ip
+                                ip_w.append([ip_zeros_buffer])
+
+                            flow_n += stride
+
+                            seq_w.append([cur_shape])
 
                 print(flow_n, end='\r')
 

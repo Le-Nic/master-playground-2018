@@ -1,6 +1,5 @@
 import tensorflow as tf
 import functools
-from modelhandler.bn_lstm import BNLSTMCell
 
 
 # Hafner, Danijar. Structuring Your TensorFlow Models, 2016.
@@ -79,6 +78,10 @@ class LSTModel(object):
         if self.is_training:
             netw_cell = tf.nn.rnn_cell.MultiRNNCell([
                 tf.nn.rnn_cell.DropoutWrapper(
+                    # tf.nn.rnn_cell.GRUCell(
+                    #     self.units_n, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                    #         uniform=True, seed=self.seed_value, dtype=tf.float32
+                    #     )
                     tf.nn.rnn_cell.LSTMCell(
                         num_units=self.units_n, dtype=tf.float32, initializer=tf.contrib.layers.xavier_initializer(
                             uniform=True, seed=self.seed_value, dtype=tf.float32
@@ -89,6 +92,10 @@ class LSTModel(object):
 
         else:
             netw_cell = tf.nn.rnn_cell.MultiRNNCell([
+                # tf.nn.rnn_cell.GRUCell(
+                #     self.units_n, kernel_initializer=tf.contrib.layers.xavier_initializer(
+                #         uniform=True, seed=self.seed_value, dtype=tf.float32
+                #     )
                 tf.nn.rnn_cell.LSTMCell(
                     num_units=self.units_n, dtype=tf.float32, initializer=tf.contrib.layers.xavier_initializer(
                         uniform=True, seed=self.seed_value, dtype=tf.float32
@@ -119,6 +126,20 @@ class LSTModel(object):
         '''
 
         with tf.variable_scope('network') as network_scope:
+
+            # touchstroke
+            # output, state = tf.nn.bidirectional_dynamic_rnn(
+            #     cell_fw=netw_cell, cell_bw=netw_cell,
+            #     inputs=self.features_placeholder,
+            #     sequence_length=self.netw_seq_placeholder,
+            #     initial_state_fw=rnn_tuple_state,
+            #     initial_state_bw=rnn_tuple_state,
+            #     dtype=tf.float32,
+            #     time_major=False,
+            #     scope=network_scope
+            # )
+            # output = tf.concat(output, 2)
+
             output, state = tf.nn.dynamic_rnn(
                 netw_cell,
                 self.features_placeholder,
@@ -128,7 +149,6 @@ class LSTModel(object):
                 time_major=False,
                 scope=network_scope
             )
-            # output = tf.reshape(output, [-1, self.units_n])  # resize to 2D (optional)
 
         # with tf.variable_scope('dropout'):
         #     output_dropped = tf.layers.dropout(

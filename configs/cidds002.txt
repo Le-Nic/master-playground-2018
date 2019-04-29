@@ -1,0 +1,68 @@
+{
+    'convert_hd5': {
+        'io_csv': {
+            'train_dir': '',
+            'test_dir': None,
+            'output_dir': '/1_converted',
+            'read_chunk_size': 100000,
+            'delimiter': ',',
+            'header': True,
+            'dates': [0],
+            'is_epoch': False,
+            'dtypes_in': {
+                1: np.float64, 2: np.object, 3: np.object, 4: np.object,  # td, pr, sa, sp
+                5: np.object, 6: np.object, 7: np.int64, 8: np.float64,  # da, dp, pkt, byt
+                9: np.int64, 10: np.object, 11: np.int64, 12: np.object,  # fl, flg, tos, lbl
+                13: np.object, 14: np.object, 15: np.object  # a.type, a.id, a.desc
+            }
+        },
+        'normalization': 'minmax1r',
+        'add_td': 1,
+        'td_scale': 1,
+        'label': {
+            'i': [12, 13],
+            'lbl_normal': ['normal', '---']
+        },
+        'pp': {
+            't': [0],
+            'ips': [3, 5],
+            'int': [2],  # transform string objects to integers
+            '1hot': [],
+            'flg': [10],  # .A.... -> 010000 (6)
+            '8bit': [11],  # 4 -> 00000100 (8)
+            '16bit': [4, 6],  # 4 -> 0000000000000100 (16)
+            'norm': [],  # apply technique selected in 'normalization'
+            'rm': [9]  # col(s) to remove
+        }
+    },
+
+    'process_hd5': {
+        'io_hd5': {
+            'meta_path': '/meta',
+            'train_dir': '',
+            'test_dir': '',
+            'output_dir': '/4_processed',
+            'arff_output': 1,  # 1: save only last sequence, 2: save all instances, others: no arff output
+            'temporal_dim': False,  # expand dimension for temporal tree (arff_output must be 1, m:1 labeling)
+            'read_chunk_size': 100000
+        },
+        'normalization': 'minmax1r',
+        'add_td': None,
+        'td_scale': 1,
+        'label': {
+            'i': [],
+            'lbl_normal': []
+        },
+        'pp': {
+            't': [],
+            'ips': [],
+            'int': [],
+            '1hot': [32, 33, 41],
+            'flg': [],  # .A.... -> 010000 (6)
+            '8bit': [],  # 4 -> 00000100 (8)
+            '16bit': [],  # 4 -> 0000000000000100 (16)
+            'norm': [1, 7, 8],
+            'rm': []  # col(s) to remove
+        }
+    }
+}

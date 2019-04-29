@@ -1,7 +1,6 @@
 import tensorflow as tf
 import functools
-from modelhandler.model_components import task_specific_attention, bidirectional_rnn, rnn
-from modelhandler.bn_lstm import BNLSTMCell
+from modelhandler.hierarchical.model_components import task_specific_attention
 
 
 # Hafner, Danijar. Structuring Your TensorFlow Models, 2016.
@@ -192,7 +191,7 @@ class LSTModel(object):
 
             loss = tf.reduce_mean(cross_entropy)
 
-            return logits, loss
+            return network_level_output, logits, loss
 
             # prediction = tf.argmax(logits, axis=-1)
             # return prediction
@@ -201,7 +200,7 @@ class LSTModel(object):
     def optimize(self):
         # normal to attack ratio (~18.2968 : 1)
 
-        _, loss = self.prediction
+        _, _, loss = self.prediction
         tf.summary.scalar('loss', loss)
 
         tvars = tf.trainable_variables()
@@ -231,7 +230,7 @@ class LSTModel(object):
     @define_scope
     def error(self):
 
-        logits, loss = self.prediction
+        outputs, logits, loss = self.prediction
 
         pred = tf.argmax(
             tf.nn.softmax(logits),
@@ -241,6 +240,6 @@ class LSTModel(object):
 
         truth = self.label_placeholder
 
-        return truth, pred, loss, tf.reduce_mean(
+        return outputs, truth, pred, loss, tf.reduce_mean(
             tf.cast(tf.equal(pred, truth), tf.float32)  # shape: [batch_n]
         )  # (ground truth, predictions, loss, accuracy)

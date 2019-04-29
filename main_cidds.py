@@ -1,7 +1,7 @@
-from preprocesshandler.preprocess import PreProcessing
-from segregationhandler.winsegt import WindowSegregation
 import numpy as np
 import re
+from preprocesshandler.preprocess import PreProcessing
+from segregationhandler.winsegt import WindowSegregation
 
 np.random.seed(147)
 
@@ -11,18 +11,16 @@ if __name__ == '__main__':
     # # START  TUNE # #
     # # # # # # # # # #
 
-    dataset_dir = "G:/data/KDD99_10"
-    trainset_name = "/kdd_train_10"  # kdd_10
-    testset_name = "/kdd_test"  # kdd_10
-    devset_name = "/kdd_dev"  # kdd_10
+    # Data Set
+    dataset_dir = "F:/data/CIDDS-002"  # splits
+    trainset_name = "/week1"  # splits
+    testset_name = "/week2"  # splits
+    devset_name = "/week1_validation"  # splits
 
-    # trainset_name = "/kdd_train"  # kdd
-    # testset_name = "/kdd_test"  # kdd
-    # devset_name = "/kdd_dev_1"  # kdd
-
-    # trainset_name = "/KDDTrain+"  # nsl
-    # testset_name = "/KDDTest+"  # nsl
-    # devset_name = "/KDDev"  # nsl
+    # dataset_dir = "G:/data/UNSW"
+    # trainset_name = "/UNSW-NB15_1"
+    # testset_name = "/UNSW-NB15_3"
+    # devset_name = "/UNSW-NB15_2"
 
     # Data Structure
     winsgt_type = "winsgt32s1"
@@ -35,7 +33,7 @@ if __name__ == '__main__':
     checkpoint_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
 
     # Preprocessing
-    with open("configs/kdd99.txt", 'r') as config_file:
+    with open("configs/cidds002.txt", 'r') as config_file:
         pp_config = eval(config_file.read())
 
     # # # # # # # # # #
@@ -94,7 +92,7 @@ if __name__ == '__main__':
 
     ''' Win/Time IP Segregation (step 2a) '''
     flowsgt_config = {
-        'input_dir': dataset_dir + "/1_converted/train",  # TUNE THIS (specific / whole dir)
+        'input_dir': dataset_dir + "/1_converted/test",  # TUNE THIS (specific / whole dir)
         'output_dir': winsgt_dir + "/2_winsgt",
         'features_len': dataset_dir + "/meta/1_mappings.hd5",
         'meta_output_name': "2_mappings"
@@ -195,6 +193,10 @@ if __name__ == '__main__':
     #     # {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
     #     # {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
     #     # {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
+    #     {'layers_n': 1, 'units_n': 128, 'batch_n': 128},
+    #     {'layers_n': 1, 'units_n': 256, 'batch_n': 128},
+    #     {'layers_n': 1, 'units_n': 128, 'batch_n': 256},
+    #     {'layers_n': 1, 'units_n': 256, 'batch_n': 256}
     #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}
     #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}, {'layers_n': 1, 'units_n': 128, 'batch_n': 256},  # layer 1
     #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 512}, {'layers_n': 1, 'units_n': 256, 'batch_n': 128},
@@ -215,13 +217,14 @@ if __name__ == '__main__':
 
     batch_n_tests = [
         # 1
-        13523  # (311029, {4-32}, 122 or 118) instances (/winsgt{4-32}s1 or /winsgt{4-32}s1 split)
+        11123  # (7975191, {4-32}, 57) instances (/winsgt{4-32}s1 splits)
+        # (?, {8-32}, {2-32}, ?) instances (/winsgt{4-32}s1 hierarchical splits)
     ]
 
     batch_n_dev = [
         # 1
-        # 1906  # (489842, {4-32}, 122) instances (/winsgt{4-32}s1)
-        2906  # (49402, {4-32}, 118) instances (/winsgt{4-32}s1 split)
+        17417  # (818599, {4-32}, 57) instances (/winsgt{4-32}s1 splits)
+        # (?, {8-32}, {2-32}, ?) instances (/winsgt{4-32}s1 hierarchical splits)
     ]
 
     # BREAKING F****** NEWS, gen_output doesn't save all outputs for training set (mod batch amount of data are missed)
@@ -252,8 +255,7 @@ if __name__ == '__main__':
                     'learning_r': 0.0001,
 
                     'e.stopping': 10,  # use None or 0 if N/A
-                    'epochs_n': 400,
-                    'calc_test': 400
+                    'epochs_n': 400
                 }
             }
 
@@ -267,23 +269,23 @@ if __name__ == '__main__':
 
                         myModel = ModelTrainer(
                             model_configs,
-                            'G' + dataset_dir[1:] + "/meta/4_mappings" + segt_type + is_ip + is_winsgt_const + ".hd5",
+                            'F' + dataset_dir[1:] + "/meta/4_mappings" + segt_type + is_ip + is_winsgt_const + ".hd5",
                             checkpoint_dir,
                             saver_dir
                         )
 
-                        myModel.train(
-                            winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
-                            winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
-                            winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
-                        )
+                        # myModel.train(
+                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
+                        #     winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
+                        # )
 
                         # myModel.validate(
                         #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
                         #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5"
                         # )
                         #
-                        # myModel.gen_output(
-                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5", True
-                        # )
+                        myModel.gen_output(
+                            winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                            winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5", False
+                        )
