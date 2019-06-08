@@ -119,20 +119,21 @@ class ModelTrainer(object):
         epoch_current = 1
         dev_loss_prev_buffer = None
         dev_loss_prev = 999999999.
+        is_trained = False
 
         if self.checkpoint_dir:
             if os.path.isfile(self.checkpoint_dir + trainset_name + self.model_name + ".log"):
                 with open(self.checkpoint_dir + trainset_name + self.model_name + ".log", "r") as log_r:
 
-                    is_output = False
                     for line in log_r:
                         log_output = line.split()
 
                         try:
                             if log_output[0] == "[ModelTrainer]":
                                 if log_output[1] == "vectors":  # indication for saved vectors
-                                    is_output = True
-                                    break
+                                    return None, None, False
+                                elif log_output[1] == "e.stop,":
+                                    is_trained = True
                                 elif log_output[1] == "validation":
                                     dev_loss_prev_buffer = float(log_output[3])
                                 elif log_output[-1] == "saved":
@@ -141,16 +142,14 @@ class ModelTrainer(object):
                         except IndexError:
                             pass
 
-                    if is_output:
-                        return None, None
                     if dev_loss_prev >= 999999999.:
                         self.checkpoint_dir = None
-                        return dev_loss_prev, epoch_current
+                        return dev_loss_prev, epoch_current, False
 
             else:
                 self.checkpoint_dir = None
 
-        return dev_loss_prev, epoch_current
+        return dev_loss_prev, epoch_current, is_trained
 
     def _model_init(self, batch_n, is_training):
 
@@ -761,7 +760,7 @@ class ModelTrainer(object):
         tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
 
         # checkpoint checking
-        dev_loss_prev, epoch_current = self._restore_model(trainsets[0]['name'])
+        dev_loss_prev, epoch_current, save_output_only = self._restore_model(trainsets[0]['name'])
         if dev_loss_prev is None or epoch_current is None:
             return True
 
@@ -812,6 +811,19 @@ class ModelTrainer(object):
                 # self._validate(sess, model_test, testsets, self.batch_n_test, True, "test")  # optional
             else:
                 sess.run(tf.global_variables_initializer())
+
+            if save_output_only:
+                print("[ModelTrainer] Saving Output...")
+
+                self._save_output(sess, self.model_train, trainsets[0],
+                                  self.hyperparams['batch_n'], True, False)
+                self._save_output(sess, model_test, testsets[0], self.batch_n_test, False, True)
+
+                logging.getLogger().removeHandler(log_file)
+                logging.getLogger().removeHandler(log_console)
+                writer_train.close()
+                writer_dev.close()
+                return True
 
             # ========== Model Training ==========
             for epoch_n in range(epoch_current, self.hyperparams['epochs_n'] + 1):

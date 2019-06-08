@@ -2,6 +2,7 @@ import numpy as np
 import re
 from preprocesshandler.preprocess import PreProcessing
 from segregationhandler.winsegt import WindowSegregation
+from segregationhandler.hierarchicalsegt import HierarchicalSegregation
 
 np.random.seed(147)
 
@@ -23,14 +24,14 @@ if __name__ == '__main__':
     # devset_name = "/UNSW-NB15_2"
 
     # Data Structure
-    winsgt_type = "winsgt32s1"
+    winsgt_type = "winsgt16s1"
     is_winsgt_const = ""  # is constance sequence: "" or "_const"
-    is_ip = ""  # is IP segregated: "" or "_ip"
+    is_ip = "_ip"  # is IP segregated: "" or "_ip"
 
     # Model
     model_type = "rnn"  # hierc / tcn / rnn
-    saver_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
-    checkpoint_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
+    saver_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
+    checkpoint_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
 
     # Preprocessing
     with open("configs/cidds002.txt", 'r') as config_file:
@@ -92,7 +93,7 @@ if __name__ == '__main__':
 
     ''' Win/Time IP Segregation (step 2a) '''
     flowsgt_config = {
-        'input_dir': dataset_dir + "/1_converted/test",  # TUNE THIS (specific / whole dir)
+        'input_dir': dataset_dir + "/1_converted/train",  # TUNE THIS (specific / whole dir)
         'output_dir': winsgt_dir + "/2_winsgt",
         'features_len': dataset_dir + "/meta/1_mappings.hd5",
         'meta_output_name': "2_mappings"
@@ -233,7 +234,7 @@ if __name__ == '__main__':
 
             model_configs = {  # default values
                 'class_type': 1,
-                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip,
+                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip + '_' + model_type,
                 # 'save_output': None,
                 'batch_n_test': batch_n_tests[batch_n],
                 'batch_n_dev': batch_n_dev[batch_n],
@@ -274,18 +275,18 @@ if __name__ == '__main__':
                             saver_dir
                         )
 
-                        # myModel.train(
-                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
-                        #     winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
-                        # )
+                        myModel.train(
+                            winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                            winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
+                            winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
+                        )
 
                         # myModel.validate(
                         #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
                         #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5"
                         # )
                         #
-                        myModel.gen_output(
-                            winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
-                            winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5", False
-                        )
+                        # myModel.gen_output(
+                        #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",
+                        #     winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5", False
+                        # )

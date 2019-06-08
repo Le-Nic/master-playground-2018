@@ -29,8 +29,8 @@ if __name__ == '__main__':
 
     # Model
     model_type = "rnn"  # hierc / tcn / rnn
-    saver_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
-    checkpoint_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
+    saver_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
+    checkpoint_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
 
     # Preprocessing
     with open("configs/unsw.txt", 'r') as config_file:

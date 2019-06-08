@@ -11,7 +11,7 @@ if __name__ == '__main__':
     # # START  TUNE # #
     # # # # # # # # # #
 
-    dataset_dir = "G:/data/KDD99_10"
+    dataset_dir = "F:/data/KDD99_10"
     trainset_name = "/kdd_train_10"  # kdd_10
     testset_name = "/kdd_test"  # kdd_10
     devset_name = "/kdd_dev"  # kdd_10
@@ -30,9 +30,9 @@ if __name__ == '__main__':
     is_ip = ""  # is IP segregated: "" or "_ip"
 
     # Model
-    model_type = "rnn"  # hierc / tcn / rnn
-    saver_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
-    checkpoint_dir = "/checkpoints_hierc" if model_type == "hierc" else "/checkpoints"
+    model_type = "tcn"  # hierc / tcn / rnn
+    saver_dir = "/checkpoints_" + model_type
+    checkpoint_dir = "/checkpoints_" + model_type
 
     # Preprocessing
     with open("configs/kdd99.txt", 'r') as config_file:
@@ -230,7 +230,7 @@ if __name__ == '__main__':
 
             model_configs = {  # default values
                 'class_type': 1,
-                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip,
+                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip + '_' + model_type,
                 # 'save_output': None,
                 'batch_n_test': batch_n_tests[batch_n],
                 'batch_n_dev': batch_n_dev[batch_n],

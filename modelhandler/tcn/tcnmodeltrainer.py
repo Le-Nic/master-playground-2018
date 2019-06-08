@@ -102,6 +102,42 @@ class ModelTrainer(object):
         print("[TCModelTrainer]", file_count, "dataset(s) found in >", data_dir)
         return datasets
 
+    def _restore_model(self, trainset_name):
+        epoch_current = 1
+        dev_loss_prev_buffer = None
+        dev_loss_prev = 999999999.
+        is_trained = False
+
+        if self.checkpoint_dir:
+            if os.path.isfile(self.checkpoint_dir + trainset_name + self.model_name + ".log"):
+                with open(self.checkpoint_dir + trainset_name + self.model_name + ".log", "r") as log_r:
+
+                    for line in log_r:
+                        log_output = line.split()
+
+                        try:
+                            if log_output[0] == "[TCModelTrainer]":
+                                if log_output[1] == "vectors":  # indication for saved vectors
+                                    return None, None, False
+                                elif log_output[1] == "e.stop,":
+                                    is_trained = True
+                                elif log_output[1] == "validation":
+                                    dev_loss_prev_buffer = float(log_output[3])
+                                elif log_output[-1] == "saved":
+                                    dev_loss_prev = dev_loss_prev_buffer
+                                    epoch_current = int(log_output[2]) + 1
+                        except IndexError:
+                            pass
+
+                    if dev_loss_prev >= 999999999.:
+                        self.checkpoint_dir = None
+                        return dev_loss_prev, epoch_current, False
+
+            else:
+                self.checkpoint_dir = None
+
+        return dev_loss_prev, epoch_current, is_trained
+
     def _model_init(self, batch_n, is_training):
         return TCNModel({
             'features': tf.placeholder(tf.float32, name="features", shape=[
@@ -132,7 +168,8 @@ class ModelTrainer(object):
 
         return dataset.make_one_shot_iterator().get_next()
 
-    def _validate_func(self, sess, model, testsets, batch_n, log_output, touchstroke_output=False):
+    def _validate_func(
+            self, sess, model, testsets, batch_n, log_output, test_name="validation", touchstroke_output=False):
         final_loss = 0
 
         for testset in testsets:
@@ -176,13 +213,13 @@ class ModelTrainer(object):
                 if touchstroke_output:  # touchstroke addition
                     for row in cm:
                         logging.info(" ".join(str(col) for col in row))
-                logging.info("[TCModelTrainer] validation loss: %.9f" % round(
+                logging.info("[TCModelTrainer] " + test_name + " loss: %.9f" % round(
                     final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
                     "%H:%M:%S", time.gmtime(time.time() - t)))
             else:
                 for row in cm:
                     print(" ".join(str(col) for col in row))
-                print("[TCModelTrainer] validation loss: %.9f" % round(
+                print("[TCModelTrainer] " + test_name + " loss: %.9f" % round(
                     final_loss, 9) + "  acc: %.9f  time: " % final_acc + time.strftime(
                     "%H:%M:%S", time.gmtime(time.time() - t)))
 
@@ -209,7 +246,7 @@ class ModelTrainer(object):
     def _output_func(self, sess, model, dataset, batch_n, is_trainset=True, log_output=False):
 
         output_name = dataset['name']
-        output_path = self.save_output + ("/train/" if is_trainset else "/dev/")  # gen Dev / Test
+        output_path = self.save_output + ("/train/" if is_trainset else "/test/")  # gen Dev / Test
         pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
 
         # ARFF header creation
@@ -336,37 +373,12 @@ class ModelTrainer(object):
         testsets = self._get_files(test_dir)
         pathlib.Path(self.saver_dir).mkdir(parents=True, exist_ok=True)
 
-        epoch_current = 1
-        dev_loss_prev = 999999999.
         tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
 
-        # ========== Model Restoration Check ==========
-        if self.checkpoint_dir:
-            if os.path.isfile(self.checkpoint_dir + trainsets[0]['name'] + self.model_name + ".log"):
-                with open(self.checkpoint_dir + trainsets[0]['name'] + self.model_name + ".log", "r") as log_r:
-
-                    saved_count = 0
-                    for line in log_r:
-                        log_output = line.split()
-
-                        try:
-                            if log_output[0] == "[TCModelTrainer]":
-                                if log_output[1] == "vectors":  # indication for saved vectors
-                                    saved_count += 1
-                                elif log_output[-1] == "saved":
-                                    dev_loss_prev = float(log_output[4])
-                                    epoch_current = int(log_output[2]) + 1
-                        except IndexError:
-                            pass
-
-                    if saved_count >= 1:
-                        return True
-                    if dev_loss_prev >= 999999999.:
-                        self.checkpoint_dir = None
-
-            else:
-                self.checkpoint_dir = None
-        # ========== Model Restoration Check ==========
+        # checkpoint checking
+        dev_loss_prev, epoch_current, save_output_only = self._restore_model(trainsets[0]['name'])
+        if dev_loss_prev is None or epoch_current is None:
+            return True
 
         # Logger Setup
         log_file = logging.FileHandler(self.saver_dir + trainsets[0]['name'] + self.model_name + ".log")
@@ -416,6 +428,19 @@ class ModelTrainer(object):
             else:
                 sess.run(tf.global_variables_initializer())
 
+            if save_output_only:
+                logging.info("[TCModelTrainer] Saving Output...")
+
+                self._save_output(sess, self.model_train, trainsets[0],
+                                  self.hyperparams['batch_n'], True, False)
+                self._save_output(sess, model_test, testsets[0], self.batch_n_test, False, True)
+
+                logging.getLogger().removeHandler(log_file)
+                logging.getLogger().removeHandler(log_console)
+                writer_train.close()
+                writer_dev.close()
+                return True
+
             # ========== Model Training ==========
             for epoch_n in range(epoch_current, self.hyperparams['epochs_n'] + 1):
                 t = time.time()
@@ -428,8 +453,7 @@ class ModelTrainer(object):
                     global_step=epoch_n
                 )
 
-                # dev_loss = self._validate(sess, model_dev, devsets, self.batch_n_dev, True)
-                dev_loss = self._validate(sess, model_test, testsets, self.batch_n_test, True)  # touchstroke addition
+                dev_loss = self._validate(sess, model_dev, devsets, self.batch_n_dev, True, "validation")
                 writer_dev.add_summary(
                     tf.Summary(value=[tf.Summary.Value(tag="loss", simple_value=dev_loss)]),
                     global_step=epoch_n
@@ -438,14 +462,12 @@ class ModelTrainer(object):
                 # ========== Saver & Early Stopping ==========
                 if self.saver_dir and (not self.hyperparams['e.stopping'] or (
                         self.hyperparams['e.stopping'] and dev_loss < dev_loss_prev)):
-
                     saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
                     logging.info("[TCModelTrainer] epoch: " + str(epoch_n) + "  loss: %.9f" % round(
                         train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
                         "%H:%M:%S", time.gmtime(t_train)) + "  saved")
                     dev_loss_prev = dev_loss
                     tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
-
 
                 elif not self.saver_dir or self.hyperparams['e.stopping']:
                     tolerance -= 1
@@ -461,7 +483,6 @@ class ModelTrainer(object):
 
                         # evaluate best model
                         logging.info("[TCModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
-
                         saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
                         logging.info("[TCModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
 
@@ -471,7 +492,7 @@ class ModelTrainer(object):
                             self._save_output(sess, model_test, testsets[0],
                                               self.batch_n_test, False, True)
                         else:
-                            self._validate(sess, model_test, testsets, self.batch_n_test, True)
+                            self._validate(sess, model_test, testsets, self.batch_n_test, True, "test")
 
                         break
                 # ========== Saver & Early Stopping ==========
@@ -481,8 +502,11 @@ class ModelTrainer(object):
 
             # max. epoch reached, save output from last checkpoint
             if self.hyperparams['e.stopping'] and tolerance > 0:
-                logging.info("[TCModelTrainer] maximum epoch")
+                # evaluate last model
+                saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name + "_lastepoch")
+                self._validate(sess, model_test, testsets, self.batch_n_test, True, "test", True)
 
+                logging.info("[TCModelTrainer] maximum epoch")
                 saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
                 logging.info("[TCModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
 
@@ -491,14 +515,14 @@ class ModelTrainer(object):
                                       self.hyperparams['batch_n'], True, False)
                     self._save_output(sess, model_test, testsets[0], self.batch_n_test, False, True)
                 else:
-                    self._validate(sess, model_test, testsets, self.batch_n_test, True)
+                    self._validate(sess, model_test, testsets, self.batch_n_test, True, "test")
 
-            else:  # touchstroke addition
-                logging.info("[TCModelTrainer] maximum epoch")
-
-                saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
-                logging.info("[TCModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
-                self._validate(sess, model_test, testsets, self.batch_n_test, True, True)
+            # else:  # touchstroke addition
+            #     logging.info("[TCModelTrainer] maximum epoch")
+            #
+            #     saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
+            #     logging.info("[TCModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)
+            #     self._validate(sess, model_test, testsets, self.batch_n_test, True, True)
 
             # ========== Model Training ==========
 
