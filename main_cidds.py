@@ -280,6 +280,7 @@ if __name__ == '__main__':
                             winsgt_dir + dataset_dict[0] + testset_name + segt_type + is_ip + ".hd5",
                             winsgt_dir + dataset_dict[0] + devset_name + segt_type + is_ip + ".hd5",
                         )
+                        exit()
 
                         # myModel.validate(
                         #     winsgt_dir + dataset_dict[0] + trainset_name + segt_type + is_ip + ".hd5",

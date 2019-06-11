@@ -12,15 +12,15 @@ if __name__ == '__main__':
     # # # # # # # # # #
 
     # Data Set
-    dataset_dir = "F:/data/UNSW_splits"  # splits
-    trainset_name = "/UNSW_NB15_training-set"  # splits
-    testset_name = "/UNSW_NB15_testing-set"  # splits
-    devset_name = "/UNSW_NB15_validation-set"  # splits
+    # dataset_dir = "C:/data/UNSW_splits"  # splits
+    # trainset_name = "/UNSW_NB15_training-set"  # splits
+    # testset_name = "/UNSW_NB15_testing-set"  # splits
+    # devset_name = "/UNSW_NB15_validation-set"  # splits
 
-    # dataset_dir = "G:/data/UNSW"
-    # trainset_name = "/UNSW-NB15_1"
-    # testset_name = "/UNSW-NB15_3"
-    # devset_name = "/UNSW-NB15_2"
+    dataset_dir = "C:/data/UNSW"
+    trainset_name = "/UNSW-NB15_1"
+    testset_name = "/UNSW-NB15_3"
+    devset_name = "/UNSW-NB15_2"
 
     # Data Structure
     winsgt_type = "winsgt32s1"
@@ -28,7 +28,7 @@ if __name__ == '__main__':
     is_ip = ""  # is IP segregated: "" or "_ip"
 
     # Model
-    model_type = "rnn"  # hierc / tcn / rnn
+    model_type = "tcn"  # hierc / tcn / rnn
     saver_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
     checkpoint_dir = "/checkpoints_" + model_type + is_ip + is_winsgt_const
 
@@ -143,83 +143,85 @@ if __name__ == '__main__':
     }
 
     # Random Grid Search
-    # hyperparams_n = 10
-    # random_hyperparams_search = {
-    #     'units_n': list(np.random.uniform(64, 512, hyperparams_n).astype('int')),
-    #     'batch_n': list(np.random.choice([64, 128, 256, 512], hyperparams_n).astype('int')),
-    #     'dropout_r': list(np.random.uniform(0., 0.5, hyperparams_n).round(2)),
-    #     'learning_r': list(np.random.choice([0.0001, 0.001], hyperparams_n)),
-    #     'channels_size': list(np.random.choice([3, 2, 4], hyperparams_n).astype('int'))
-    # }
-    #
-    # if model_type == "tcn":
-    #     random_hyperparams_search['channels_n'] = []
-    #     for pairs in zip(random_hyperparams_search['units_n'], random_hyperparams_search['channels_size']):
-    #         random_hyperparams_search['channels_n'].append([pairs[0] for _ in range(pairs[1])])
-    #     random_hyperparams_search.pop('units_n', None)
-    #
-    # hyperparams_configs = [
-    #     {next(iter(random_hyperparams_search.keys())): v} for v in next(iter(random_hyperparams_search.values()))
-    # ]
-    #
-    # for key, values in random_hyperparams_search.items():
-    #     for i, value in enumerate(values):
-    #         hyperparams_configs[i][key] = value
+    hyperparams_n = 10
+    random_hyperparams_search = {
+        'units_n': list(np.random.uniform(64, 512, hyperparams_n).astype('int')),
+        'batch_n': list(np.random.choice([64, 128, 256, 512], hyperparams_n).astype('int')),
+        'dropout_r': list(np.random.uniform(0., 0.5, hyperparams_n).round(2)),
+        'learning_r': list(np.random.choice([0.0001, 0.001], hyperparams_n)),
+        'channels_size': list(np.random.choice([3, 2, 4], hyperparams_n).astype('int'))
+    }
+
+    if model_type == "tcn":
+        random_hyperparams_search['channels_n'] = []
+        for pairs in zip(random_hyperparams_search['units_n'], random_hyperparams_search['channels_size']):
+            random_hyperparams_search['channels_n'].append([pairs[0] for _ in range(pairs[1])])
+        random_hyperparams_search.pop('units_n', None)
+
+    hyperparams_configs = [
+        {next(iter(random_hyperparams_search.keys())): v} for v in next(iter(random_hyperparams_search.values()))
+    ]
+
+    for key, values in random_hyperparams_search.items():
+        for i, value in enumerate(values):
+            hyperparams_configs[i][key] = value
 
     # Grid Search
-    hyperparams_configs = [  # loop: every hyperparameters pair
-        {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
-        {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
-        {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
-        {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
-        {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
-        {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
-        {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
-
-        {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
-        {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
-        {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
-        {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
-        {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
-        {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
-        {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
-        # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}
-        # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}, {'layers_n': 1, 'units_n': 128, 'batch_n': 256},  # layer 1
-        # {'layers_n': 1, 'units_n': 128, 'batch_n': 512}, {'layers_n': 1, 'units_n': 256, 'batch_n': 128},
-        # {'layers_n': 1, 'units_n': 256, 'batch_n': 256}, {'layers_n': 1, 'units_n': 256, 'batch_n': 512},
-        # {'layers_n': 1, 'units_n': 384, 'batch_n': 128}, {'layers_n': 1, 'units_n': 384, 'batch_n': 256},
-        # {'layers_n': 1, 'units_n': 384, 'batch_n': 512},
-        # {'layers_n': 2, 'units_n': 128, 'batch_n': 128}, {'layers_n': 2, 'units_n': 128, 'batch_n': 256},  # layer 2
-        # {'layers_n': 2, 'units_n': 128, 'batch_n': 512}, {'layers_n': 2, 'units_n': 256, 'batch_n': 128},
-        # {'layers_n': 2, 'units_n': 256, 'batch_n': 256}, {'layers_n': 2, 'units_n': 256, 'batch_n': 512},
-        # {'layers_n': 2, 'units_n': 384, 'batch_n': 128}, {'layers_n': 2, 'units_n': 384, 'batch_n': 256},
-        # {'layers_n': 2, 'units_n': 384, 'batch_n': 512},
-        # {'layers_n': 3, 'units_n': 128, 'batch_n': 128}, {'layers_n': 3, 'units_n': 128, 'batch_n': 256},  # layer 3
-        # {'layers_n': 3, 'units_n': 128, 'batch_n': 512}, {'layers_n': 3, 'units_n': 256, 'batch_n': 128},
-        # {'layers_n': 3, 'units_n': 256, 'batch_n': 256}, {'layers_n': 3, 'units_n': 256, 'batch_n': 512},
-        # {'layers_n': 3, 'units_n': 384, 'batch_n': 128}, {'layers_n': 3, 'units_n': 384, 'batch_n': 256},
-        # {'layers_n': 3, 'units_n': 384, 'batch_n': 512}
-    ]
+    # hyperparams_configs = [  # loop: every hyperparameters pair
+    #     {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .3},
+    #     {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
+    #     {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
+    #     {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .3},
+    #     {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
+    #     {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
+    #     {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .3},
+    #
+    #     {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 128, 'dropout_r': .6},
+    #     {'kernels_n': 4, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
+    #     {'kernels_n': 8, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
+    #     {'kernels_n': 16, 'channels_n': [64, 64, 64], 'batch_n': 256, 'dropout_r': .6},
+    #     {'kernels_n': 4, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
+    #     {'kernels_n': 8, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
+    #     {'kernels_n': 16, 'channels_n': [128, 128, 128], 'batch_n': 256, 'dropout_r': .6},
+    #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}
+    #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 128}, {'layers_n': 1, 'units_n': 128, 'batch_n': 256},  # layer 1
+    #     # {'layers_n': 1, 'units_n': 128, 'batch_n': 512}, {'layers_n': 1, 'units_n': 256, 'batch_n': 128},
+    #     # {'layers_n': 1, 'units_n': 256, 'batch_n': 256}, {'layers_n': 1, 'units_n': 256, 'batch_n': 512},
+    #     # {'layers_n': 1, 'units_n': 384, 'batch_n': 128}, {'layers_n': 1, 'units_n': 384, 'batch_n': 256},
+    #     # {'layers_n': 1, 'units_n': 384, 'batch_n': 512},
+    #     # {'layers_n': 2, 'units_n': 128, 'batch_n': 128}, {'layers_n': 2, 'units_n': 128, 'batch_n': 256},  # layer 2
+    #     # {'layers_n': 2, 'units_n': 128, 'batch_n': 512}, {'layers_n': 2, 'units_n': 256, 'batch_n': 128},
+    #     # {'layers_n': 2, 'units_n': 256, 'batch_n': 256}, {'layers_n': 2, 'units_n': 256, 'batch_n': 512},
+    #     # {'layers_n': 2, 'units_n': 384, 'batch_n': 128}, {'layers_n': 2, 'units_n': 384, 'batch_n': 256},
+    #     # {'layers_n': 2, 'units_n': 384, 'batch_n': 512},
+    #     # {'layers_n': 3, 'units_n': 128, 'batch_n': 128}, {'layers_n': 3, 'units_n': 128, 'batch_n': 256},  # layer 3
+    #     # {'layers_n': 3, 'units_n': 128, 'batch_n': 512}, {'layers_n': 3, 'units_n': 256, 'batch_n': 128},
+    #     # {'layers_n': 3, 'units_n': 256, 'batch_n': 256}, {'layers_n': 3, 'units_n': 256, 'batch_n': 512},
+    #     # {'layers_n': 3, 'units_n': 384, 'batch_n': 128}, {'layers_n': 3, 'units_n': 384, 'batch_n': 256},
+    #     # {'layers_n': 3, 'units_n': 384, 'batch_n': 512}
+    # ]
 
     batch_n_tests = [
         # 1
-        4574  # (82332, {4-32}, 194) instances (/winsgt{4-32}s1 splits)
+        15
+        # 4574  # (82332, {4-32}, 194) instances (/winsgt{4-32}s1 splits)
         # 15  # (1140045, {8-32}, {2-32}, 238) instances (/winsgt{4-32}s1 hierarchical splits)
     ]
 
     batch_n_dev = [
         # 1
-        1594  # (17534, {4-32}, 194) instances (/winsgt{4-32}s1 splits)
+        2800  # (14000, {4-32}, 238) instances (/winsgt{4-32}s1)
+        # 1594  # (17534, {4-32}, 194) instances (/winsgt{4-32}s1 splits)
         # 3500  # (14000, {8-32}, {2-32}, 238) instances (/winsgt{4-32}s1 hierarchical splits)
     ]
 
@@ -229,7 +231,7 @@ if __name__ == '__main__':
 
             model_configs = {  # default values
                 'class_type': 1,
-                'save_output': 'G' + winsgt_dir[1:] + '/5_output' + is_ip,
+                'save_output': 'C' + winsgt_dir[1:] + '/5_output' + is_ip + '_' + model_type,
                 # 'save_output': None,
                 'batch_n_test': batch_n_tests[batch_n],
                 'batch_n_dev': batch_n_dev[batch_n],
@@ -250,7 +252,7 @@ if __name__ == '__main__':
                     'dropout_r': 0.,
                     'learning_r': 0.0001,
 
-                    'e.stopping': 24,  # use None or 0 if N/A
+                    'e.stopping': 10,  # use None or 0 if N/A
                     'epochs_n': 400
                 }
             }
@@ -265,7 +267,7 @@ if __name__ == '__main__':
 
                         myModel = ModelTrainer(
                             model_configs,
-                            'F' + dataset_dir[1:] + "/meta/4_mappings" + segt_type + is_ip + is_winsgt_const + ".hd5",
+                            'C' + dataset_dir[1:] + "/meta/4_mappings" + segt_type + is_ip + is_winsgt_const + ".hd5",
                             checkpoint_dir,
                             saver_dir
                         )

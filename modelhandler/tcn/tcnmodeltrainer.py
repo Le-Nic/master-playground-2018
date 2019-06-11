@@ -469,6 +469,7 @@ class ModelTrainer(object):
                     dev_loss_prev = dev_loss
                     tolerance = self.hyperparams['e.stopping'] if self.hyperparams['e.stopping'] else 0
 
+                # if saver directory is not specified or if early stopping is specified by have higher dev loss
                 elif not self.saver_dir or self.hyperparams['e.stopping']:
                     tolerance -= 1
 
@@ -476,10 +477,11 @@ class ModelTrainer(object):
                         train_loss, 9) + "  acc: %.9f" % round(acc_epoch, 9) + "  time: " + time.strftime(
                         "%H:%M:%S", time.gmtime(t_train)))
 
+                    # when reaching the tolerance level (the max. epoch for early stopping)
                     if self.hyperparams['e.stopping'] and tolerance <= 0:
                         # evaluate last model
                         saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name + "_lastepoch")
-                        self._validate(sess, model_test, testsets, self.batch_n_test, True)
+                        self._validate(sess, model_test, testsets, self.batch_n_test, True, "test", True)
 
                         # evaluate best model
                         logging.info("[TCModelTrainer] e.stop,  epoch: " + str(epoch_n - self.hyperparams['e.stopping']))
@@ -495,6 +497,7 @@ class ModelTrainer(object):
                             self._validate(sess, model_test, testsets, self.batch_n_test, True, "test")
 
                         break
+                gc.collect()
                 # ========== Saver & Early Stopping ==========
 
             writer_train.close()
@@ -506,6 +509,7 @@ class ModelTrainer(object):
                 saver.save(sess, self.saver_dir + trainsets[0]['name'] + self.model_name + "_lastepoch")
                 self._validate(sess, model_test, testsets, self.batch_n_test, True, "test", True)
 
+                # evaluate best model
                 logging.info("[TCModelTrainer] maximum epoch")
                 saver.restore(sess, self.saver_dir + trainsets[0]['name'] + self.model_name)
                 logging.info("[TCModelTrainer] restored model > " + trainsets[0]['name'] + self.model_name)

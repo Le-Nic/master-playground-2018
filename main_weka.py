@@ -41,16 +41,16 @@ testset_name = "/test/week2"
 hyperparams = [
     # "_y0_last"  # classical
 
-    "U228B64L1D25LR1e-03_y0_1_last",  # rnn
-    "U347B128L1D8LR1e-04_y0_1_last",
-    # "U77B64L1D38LR1e-03_y0_1_last",
-    # "U373B512L1D14LR1e-03_y0_1_last",
-    # "U484B64L1D9LR1e-04_y0_1_last",
-    # "U485B128L1D9LR1e-03_y0_1_last",
-    # "U236B256L1D1LR1e-04_y0_1_last",
-    # "U97B64L1D10LR1e-04_y0_1_last",
-    # "U281B512L1D17LR1e-03_y0_1_last",
-    # "U319B64L1D24LR1e-03_y0_1_last"
+    # "U228B64L1D25LR1e-03_y0_1_last",  # rnn
+    # "U347B128L1D8LR1e-04_y0_1_last",
+    "U77B64L1D38LR1e-03_y0_1_last",
+    "U373B512L1D14LR1e-03_y0_1_last",
+    "U484B64L1D9LR1e-04_y0_1_last",
+    "U485B128L1D9LR1e-03_y0_1_last",
+    "U236B256L1D1LR1e-04_y0_1_last",
+    "U97B64L1D10LR1e-04_y0_1_last",
+    "U281B512L1D17LR1e-03_y0_1_last",
+    "U319B64L1D24LR1e-03_y0_1_last"
 
     # "K4C[228, 228]B64D25LR1e-03_y0_1_last",  # tcn
     # "K4C[347, 347]B128D8LR1e-04_y0_1_last",
