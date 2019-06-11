@@ -9,6 +9,7 @@ import os
 import pathlib
 import time
 import logging
+import gc
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
